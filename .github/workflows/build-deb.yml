@@ -46,6 +46,7 @@ jobs:
       ARCH: ${{ inputs.arch }}
       DEPOT_DIR: ${{ github.workspace }}/depot_tools
       ENGINE_ROOT: ${{ github.workspace }}/engine
+      ANDROID_HOME: ${{ github.workspace }}/android-sdk
 
     steps:
       - name: Checkout
@@ -132,6 +133,7 @@ jobs:
         shell: bash
         env:
           INPUT_FLUTTER_VERSION: ${{ inputs.flutter_version }}
+          ANDROID_HOME: ${{ github.workspace }}/android-sdk
         run: |
           set -euo pipefail
           NDK_DIR="${NDK_PATH:-${ANDROID_NDK:-${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}}}"
@@ -143,7 +145,7 @@ jobs:
           fi
           if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
             echo "NDK not found, installing via sdkmanager..."
-            ANDROID_SDK_ROOT="${ANDROID_HOME:-$HOME/android-sdk}"
+            ANDROID_SDK_ROOT="$ANDROID_HOME"
             mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
             if [ ! -d "$ANDROID_SDK_ROOT/cmdline-tools/latest" ]; then
               curl -sSfL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdtools.zip
