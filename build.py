@@ -1488,7 +1488,7 @@ class Build:
             logger.info(f'[5/{total}] sysroot verified with lock file, skipping (use --force to rebuild).')
         else:
             rebuilt_any_artifact[0] = True
-            run_step(5, total, 'sysroot', self.sysroot, arch=arch)
+            run_step(5, total, 'sysroot', self.sysroot, arch=arch, locked=not force)
 
         # Step 6: configure and build debug + dart + impellerc + const_finder
         out_debug = utils.target_output(str(self.root), arch, 'debug')

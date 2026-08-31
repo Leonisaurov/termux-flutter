@@ -185,7 +185,7 @@ jobs:
           if [ "${{ inputs.force }}" = "true" ]; then
             EXTRA_ARGS="--force"
           fi
-          python build.py build_all --arch="$ARCH" $EXTRA_ARGS
+          python build.py build_all --arch="$ARCH" --force $EXTRA_ARGS
 
       - name: Collect artifact metadata
         id: artifact
