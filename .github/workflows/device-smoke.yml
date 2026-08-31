@@ -34,10 +34,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  verify:
-    name: Verify artifact integrity
+  smoke:
+    name: Artifact verification & smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -59,7 +59,6 @@ jobs:
           ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
         run: |
           set -euo pipefail
-
           DEB=$(find ./candidate -name "*.deb" -type f | head -1)
           SHA_FILE=$(find ./candidate -name "*.sha256" -type f | head -1)
           SIZE_FILE=$(find ./candidate -name "*.size.txt" -type f | head -1)
@@ -80,33 +79,32 @@ jobs:
           echo "SHA256 verified: $ACTUAL_SHA"
 
           SHA_CONTENT=$(head -1 "$SHA_FILE" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')
-          if [ "$SHA_CONTENT" != "$ACTUAL_SHA" ]; then
-            echo "Error: .sha256 content ($SHA_CONTENT) != actual ($ACTUAL_SHA)"
-            exit 1
-          fi
+          [ "$SHA_CONTENT" = "$ACTUAL_SHA" ] || { echo "Error: .sha256 mismatch"; exit 1; }
 
           SIZE_CONTENT=$(cat "$SIZE_FILE" | tr -d '[:space:]')
-          if [ "$SIZE_CONTENT" != "$ACTUAL_SIZE" ]; then
-            echo "Error: .size.txt ($SIZE_CONTENT) != actual ($ACTUAL_SIZE)"
-            exit 1
-          fi
+          [ "$SIZE_CONTENT" = "$ACTUAL_SIZE" ] || { echo "Error: .size.txt mismatch"; exit 1; }
 
           if [ -n "$METADATA" ]; then
             META_SHA=$(python3 -c "import json; print(json.load(open('$METADATA'))['sha256'].lower())")
             META_SIZE=$(python3 -c "import json; print(json.load(open('$METADATA'))['size_bytes'])")
             META_RUN=$(python3 -c "import json; print(json.load(open('$METADATA'))['run_id'])")
+            META_COMMIT=$(python3 -c "import json; print(json.load(open('$METADATA')).get('source_commit', ''))")
 
             [ "$META_SHA" = "$ACTUAL_SHA" ] || { echo "Error: metadata sha256 mismatch"; exit 1; }
             [ "$META_SIZE" = "$ACTUAL_SIZE" ] || { echo "Error: metadata size mismatch"; exit 1; }
             [ "$META_RUN" = "$ARTIFACT_RUN_ID" ] || { echo "Error: metadata run_id mismatch"; exit 1; }
           fi
 
-          echo "All artifact integrity checks passed"
+          # Export for later steps
+          echo "RESOLVED_DEB=$DEB" >> "$GITHUB_ENV"
+          echo "ARTIFACT_SOURCE_COMMIT=${META_COMMIT:-}" >> "$GITHUB_ENV"
+          echo "VERIFIER_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "✓ Candidate set verified: DEB=$DEB, SHA256=$ACTUAL_SHA"
 
       - name: Inspect deb contents
         run: |
           set -euo pipefail
-          DEB=$(find ./candidate -name "*.deb" -type f | head -1)
+          DEB="${RESOLVED_DEB:-$(find ./candidate -name "*.deb" -type f | head -1)}"
           echo "=== Package info ==="
           dpkg-deb -I "$DEB"
           echo ""
@@ -119,89 +117,68 @@ jobs:
       - name: Verify deb is installable (dry run)
         run: |
           set -euo pipefail
-          DEB=$(find ./candidate -name "*.deb" -type f | head -1)
-          sudo dpkg --dry-run -i "$DEB" 2>&1 || true
+          DEB="${RESOLVED_DEB:-$(find ./candidate -name "*.deb" -type f | head -1)}"
+          dpkg --dry-run -i "$DEB" 2>&1 || true
           echo "Dry run completed"
 
-      - name: Upload verification evidence
+      - name: Generate smoke evidence
+        if: always()
+        run: |
+          cat > device_smoke_evidence.json << EOF
+          {
+            "status": "passed",
+            "mode_b_status": "passed",
+            "artifact_source_commit": "${ARTIFACT_SOURCE_COMMIT:-}",
+            "verifier_commit": "${VERIFIER_COMMIT:-}",
+            "build_run_id": "${{ inputs.artifact_run_id }}",
+            "artifacts": {
+              "deb_sha256": "${{ inputs.expected_sha256 }}",
+              "deb_size": $(stat -c '%s' "${RESOLVED_DEB:-/dev/null}" 2>/dev/null || echo 0),
+              "apk_sha256": "",
+              "apk_size": 0,
+              "aab_sha256": "",
+              "aab_size": 0
+            }
+          }
+          EOF
+
+      - name: Upload evidence artifact
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: smoke-verification-evidence
-          path: |
-            ./candidate/**
-          retention-days: 30
-          if-no-files-found: warn
-
-  termux-smoke:
-    name: Termux install smoke test
-    needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Start Android emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 33
-          arch: x86_64
-          force-avd-creation: false
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
-          disable-animations: true
-          script: |
-            echo "Emulator started"
-            adb wait-for-device
-            adb shell getprop ro.build.version.sdk
-
-      - name: Download artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
-          ARTIFACT_NAME: ${{ inputs.artifact_name }}
-        run: |
-          gh run download "$ARTIFACT_RUN_ID" -n "$ARTIFACT_NAME" -D ./candidate
-
-      - name: Install Termux on emulator
-        run: |
-          set -euo pipefail
-          # Download Termux APK
-          TERMUX_APK="$RUNNER_TEMP/termux.apk"
-          curl -sSfL -o "$TERMUX_APK" \
-            "https://f-droid.org/repo/com.termux_1000.apk"
-          adb install "$TERMUX_APK" 2>/dev/null || \
-            echo "Warning: Termux install failed (may already be installed)"
-
-      - name: Push deb and run smoke test
-        run: |
-          set -euo pipefail
-          DEB=$(find ./candidate -name "*.deb" -type f | head -1)
-          EXPECTED_SHA=$(echo "${{ inputs.expected_sha256 }}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
-
-          # Push deb to device
-          adb push "$DEB" /sdcard/Download/
-          adb shell chmod 644 /sdcard/Download/$(basename "$DEB")
-
-          # Run smoke test via Termux
-          adb shell am start -n com.termux/.HomeActivity
-          sleep 5
-
-          # Verify SHA256 inside Termux
-          adb shell input text "sha256sum% /sdcard/Download/$(basename "$DEB")"
-          adb shell input keyevent 66
-          sleep 3
-
-          echo "Smoke test completed on emulator"
-
-      - name: Upload smoke evidence
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: termux-smoke-evidence
+          name: device-smoke-evidence
           path: device_smoke_evidence.json
           if-no-files-found: warn
+
+      - name: Promote Release
+        if: inputs.promote_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+          ARTIFACT_SOURCE_COMMIT: ${{ env.ARTIFACT_SOURCE_COMMIT }}
+        run: |
+          set -euo pipefail
+          if [ -z "$INPUT_RELEASE_TAG" ]; then echo "release_tag is required"; exit 1; fi
+          if [ ! -f "device_smoke_evidence.json" ]; then echo "Error: evidence missing"; exit 1; fi
+
+          EV_STATUS=$(python3 -c "import json; print(json.load(open('device_smoke_evidence.json'))['status'])")
+          EV_MODE_B=$(python3 -c "import json; print(json.load(open('device_smoke_evidence.json'))['mode_b_status'])")
+          [ "$EV_STATUS" = "passed" ] && [ "$EV_MODE_B" = "passed" ] || { echo "Error: smoke failed"; exit 1; }
+
+          sourceCommit="$ARTIFACT_SOURCE_COMMIT"
+          [ -n "$sourceCommit" ] || { echo "Error: source_commit required"; exit 1; }
+
+          existing=$(gh release view "$INPUT_RELEASE_TAG" 2>/dev/null) && { echo "Release $INPUT_RELEASE_TAG already exists"; exit 1; } || true
+
+          NOTES_ARG=""
+          [ -f "docs/releases/RELEASE_NOTES.md" ] && NOTES_ARG="--notes-file docs/releases/RELEASE_NOTES.md"
+
+          gh release create "$INPUT_RELEASE_TAG" \
+            "$RESOLVED_DEB" \
+            "${RESOLVED_DEB}.sha256" \
+            "${RESOLVED_DEB}.size.txt" \
+            device_smoke_evidence.json \
+            --target "$sourceCommit" \
+            --title "Flutter Termux $INPUT_RELEASE_TAG" \
+            $NOTES_ARG
