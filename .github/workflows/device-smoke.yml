@@ -166,8 +166,8 @@ jobs:
           EV_MODE_B=$(python3 -c "import json; print(json.load(open('device_smoke_evidence.json'))['mode_b_status'])")
           [ "$EV_STATUS" = "passed" ] && [ "$EV_MODE_B" = "passed" ] || { echo "Error: smoke failed"; exit 1; }
 
-          sourceCommit="$ARTIFACT_SOURCE_COMMIT"
-          if [ -z "$sourceCommit" ]; then echo "Error: source_commit is required"; exit 1; fi
+          SOURCE_COMMIT="$ARTIFACT_SOURCE_COMMIT"
+          if [ -z "$SOURCE_COMMIT" ]; then echo "Error: source_commit is required"; exit 1; fi
 
           existing=$(gh release view "$INPUT_RELEASE_TAG" 2>/dev/null) && { echo "Release $INPUT_RELEASE_TAG already exists"; exit 1; } || true
 
@@ -179,6 +179,6 @@ jobs:
             "${RESOLVED_DEB}.sha256" \
             "${RESOLVED_DEB}.size.txt" \
             device_smoke_evidence.json \
-            --target "$sourceCommit" \
+            --target "$SOURCE_COMMIT" \
             --title "Flutter Termux $INPUT_RELEASE_TAG" \
             $NOTES_ARG
