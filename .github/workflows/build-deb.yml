@@ -1,10 +1,10 @@
-name: Build deb (self-hosted)
+name: Build deb
 
 on:
   workflow_dispatch:
     inputs:
       flutter_version:
-        description: Flutter version to build
+        description: Flutter version to build (must match build.toml tag)
         required: false
       arch:
         description: Target architecture
@@ -13,13 +13,20 @@ on:
         type: choice
         options:
           - arm64
-      runner_labels_json:
-        description: JSON array for runs-on labels
-        required: true
-        default: '["self-hosted","linux"]'
-      run_id:
-        description: "Run ID to use for rebuilds or tracking (optional)"
+      force:
+        description: Force full rebuild (ignore caches)
         required: false
+        type: boolean
+        default: false
+      runner:
+        description: Runner to use
+        required: true
+        default: ubuntu-latest
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-latest-4-cores
+          - ubuntu-latest-8-cores
 
 permissions:
   contents: write
@@ -32,17 +39,29 @@ concurrency:
 jobs:
   build:
     name: Full Flutter/Termux deb build
-    runs-on: ${{ fromJSON(inputs.runner_labels_json) }}
-    timeout-minutes: 720
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 350
 
     env:
       ARCH: ${{ inputs.arch }}
+      DEPOT_DIR: ${{ github.workspace }}/depot_tools
+      ENGINE_ROOT: ${{ github.workspace }}/engine
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Free disk space
+        run: |
+          echo "=== Disk before ==="
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          docker image prune -af 2>/dev/null || true
+          sudo apt-get clean
+          echo "=== Disk after ==="
+          df -h /
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -53,17 +72,61 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Ensure depot_tools is available
-        shell: bash
+      - name: Install system dependencies
         run: |
-          set -euo pipefail
-          if ! command -v gclient >/dev/null 2>&1; then
-            DEPOT_DIR="$RUNNER_TEMP/depot_tools"
-            if [ ! -d "$DEPOT_DIR" ]; then
-              git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$DEPOT_DIR"
-            fi
-            echo "$DEPOT_DIR" >> "$GITHUB_PATH"
-          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl git python3 pkg-config libgtk-3-dev \
+            ninja-build cmake clang lld
+
+      - name: Cache depot_tools
+        id: cache-depot
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.DEPOT_DIR }}
+          key: depot-tools-${{ runner.os }}
+
+      - name: Ensure depot_tools is available
+        if: steps.cache-depot.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$DEPOT_DIR"
+
+      - name: Add depot_tools to PATH
+        run: echo "$DEPOT_DIR" >> "$GITHUB_PATH"
+
+      - name: Cache engine source
+        id: cache-engine
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ENGINE_ROOT }}
+            ~/.gcloud-gce-linux-sdk
+          key: engine-src-${{ hashFiles('build.toml') }}-${{ github.sha }}
+          restore-keys: |
+            engine-src-${{ hashFiles('build.toml') }}-
+            engine-src-
+
+      - name: Cache sysroot
+        id: cache-sysroot
+        uses: actions/cache@v4
+        with:
+          path: sysroot
+          key: sysroot-${{ hashFiles('build.toml') }}-${{ github.sha }}
+          restore-keys: |
+            sysroot-${{ hashFiles('build.toml') }}-
+            sysroot-
+
+      - name: Cache build artifacts
+        id: cache-build
+        uses: actions/cache@v4
+        with:
+          path: |
+            engine/src/out
+            engine/.gclient
+          key: build-${{ hashFiles('build.toml') }}-${{ github.sha }}
+          restore-keys: |
+            build-${{ hashFiles('build.toml') }}-
+            build-
 
       - name: Validate host toolchain contract
         shell: bash
@@ -76,56 +139,56 @@ jobs:
             TOML_NDK=$(python3 -c "import tomllib; print(tomllib.load(open('build.toml', 'rb')).get('ndk', {}).get('path', '') or '')" 2>/dev/null || true)
             if [ -n "$TOML_NDK" ] && [ -d "$TOML_NDK" ]; then
               NDK_DIR="$TOML_NDK"
-            elif [ -d "/opt/android-ndk-r27d" ]; then
-              NDK_DIR="/opt/android-ndk-r27d"
             fi
           fi
-
           if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
-            echo "Error: Missing Android NDK. Please set NDK_PATH, ANDROID_NDK, ANDROID_NDK_HOME, or ANDROID_NDK_ROOT, or provide valid build.toml ndk.path or /opt/android-ndk-r27d" >&2
-            exit 1
+            echo "NDK not found, installing via sdkmanager..."
+            ANDROID_SDK_ROOT="${ANDROID_HOME:-$HOME/android-sdk}"
+            mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+            if [ ! -d "$ANDROID_SDK_ROOT/cmdline-tools/latest" ]; then
+              curl -sSfL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdtools.zip
+              unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools
+              mv /tmp/cmdtools/cmdline-tools "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+            fi
+            yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" "ndk;27.2.12479018" 2>/dev/null || true
+            NDK_DIR="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
           fi
-
           if [ ! -f "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]; then
-            echo "Error: NDK at '$NDK_DIR' missing expected toolchain: $NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" >&2
+            echo "Error: NDK at '$NDK_DIR' missing expected toolchain" >&2
             exit 1
           fi
-
-          echo "NDK_PATH=$NDK_DIR" >> $GITHUB_ENV
-          echo "ANDROID_NDK=$NDK_DIR" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=$NDK_DIR" >> $GITHUB_ENV
-
+          echo "NDK_PATH=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
           INPUT_VERSION="$INPUT_FLUTTER_VERSION"
           TOML_VERSION=$(grep '^tag *=' build.toml | sed -E "s/tag *= *'([^']+)'/\1/")
-
           if [ -z "$TOML_VERSION" ]; then
             echo "Failed to parse flutter version from build.toml" >&2
             exit 1
           fi
-
-          if [ -n "$INPUT_VERSION" ]; then
-            if [ "$INPUT_VERSION" != "$TOML_VERSION" ]; then
-              echo "Error: workflow input flutter_version ($INPUT_VERSION) does not match build.toml tag ($TOML_VERSION)" >&2
-              exit 1
-            fi
-            VERSION="$INPUT_VERSION"
-          else
-            VERSION="$TOML_VERSION"
+          if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "$TOML_VERSION" ]; then
+            echo "Error: input flutter_version ($INPUT_VERSION) != build.toml tag ($TOML_VERSION)" >&2
+            exit 1
           fi
-          echo "FLUTTER_VERSION=$VERSION" >> $GITHUB_ENV
-          echo "BUILD_START_EPOCH=$(date +%s)" >> $GITHUB_ENV
+          VERSION="${INPUT_VERSION:-$TOML_VERSION}"
+          echo "FLUTTER_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
           python -m py_compile build.py package.py sysroot.py utils.py
           bash -n scripts/install/post_install.sh
           python scripts/ci/check_repo.py
 
       - name: Build all artifacts
-        run: python build.py build_all --arch="$ARCH"
+        run: |
+          EXTRA_ARGS=""
+          if [ "${{ inputs.force }}" = "true" ]; then
+            EXTRA_ARGS="--force"
+          fi
+          python build.py build_all --arch="$ARCH" $EXTRA_ARGS
 
       - name: Collect artifact metadata
         id: artifact
         shell: bash
         run: |
-          # Artifact path derived from build output
           DEB=$(python -c "import build; print(build.Build().output('$ARCH'))")
           test -f "$DEB"
           sha256sum "$DEB" | tee "${DEB}.sha256"
@@ -139,15 +202,11 @@ jobs:
           DEB="${{ steps.artifact.outputs.deb }}"
           METADATA_FILE="build_metadata.json"
           EVIDENCE_FILE="build_evidence.json"
-
-          # Generate inventory (list of files in deb)
           TZ=UTC dpkg-deb -c "$DEB" > inventory.txt
-
           TREE_SHA=$(git log -1 --format='%T' HEAD)
           NOW_EPOCH=$(date +%s)
           START_EPOCH="${BUILD_START_EPOCH:-$NOW_EPOCH}"
           BUILD_DURATION=$((NOW_EPOCH - START_EPOCH))
-
           cat <<EOF > "$METADATA_FILE"
           {
             "version": "${FLUTTER_VERSION}",
@@ -161,7 +220,6 @@ jobs:
             "build_duration_seconds": ${BUILD_DURATION}
           }
           EOF
-
           INVENTORY_COUNT=$(wc -l < inventory.txt)
           cat <<EOF > "$EVIDENCE_FILE"
           {
@@ -178,7 +236,6 @@ jobs:
             "build_duration_seconds": ${BUILD_DURATION}
           }
           EOF
-
           echo "metadata=$METADATA_FILE" >> "$GITHUB_OUTPUT"
           echo "evidence=$EVIDENCE_FILE" >> "$GITHUB_OUTPUT"
           echo "inventory=inventory.txt" >> "$GITHUB_OUTPUT"
@@ -196,4 +253,3 @@ jobs:
             build_evidence.json
           retention-days: 90
           if-no-files-found: error
-
