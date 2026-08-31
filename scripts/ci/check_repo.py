@@ -58,7 +58,7 @@ def require_file(path: str) -> None:
 
 def check_markdown_fences() -> None:
     for path in sorted(ROOT.glob("**/*.md")):
-        if any(part in {".git", "flutter", "sysroot", "reference_termux_flutter", ".omx", ".omc", ".agents", "scratch"} for part in path.parts):
+        if any(part in {".git", "flutter", "sysroot", "reference_termux_flutter", ".omx", ".omc", ".agents", "scratch", "android-sdk", "depot_tools", "engine"} for part in path.parts):
             continue
         if not path.is_file():
             continue
@@ -72,7 +72,7 @@ def check_markdown_fences() -> None:
 
 def check_markdown_no_control_characters() -> None:
     for path in sorted(ROOT.glob("**/*.md")):
-        if any(part in {".git", "flutter", "sysroot", "reference_termux_flutter", ".omx", ".omc", ".agents", "scratch"} for part in path.parts):
+        if any(part in {".git", "flutter", "sysroot", "reference_termux_flutter", ".omx", ".omc", ".agents", "scratch", "android-sdk", "depot_tools", "engine"} for part in path.parts):
             continue
         if not path.is_file():
             continue
@@ -91,7 +91,7 @@ def check_markdown_no_control_characters() -> None:
 def check_markdown_links() -> None:
     link_pattern = re.compile(r"\[[^\]]+\]\(([^)\s]+\.md(?:#[^)]+)?)\)")
     for path in sorted(ROOT.glob("**/*.md")):
-        if any(part in {".git", "flutter", "sysroot", "reference_termux_flutter", ".omx", ".omc", ".agents", "scratch"} for part in path.parts):
+        if any(part in {".git", "flutter", "sysroot", "reference_termux_flutter", ".omx", ".omc", ".agents", "scratch", "android-sdk", "depot_tools", "engine"} for part in path.parts):
             continue
         if not path.is_file():
             continue
