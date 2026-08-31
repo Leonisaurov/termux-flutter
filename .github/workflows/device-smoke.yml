@@ -167,7 +167,7 @@ jobs:
           [ "$EV_STATUS" = "passed" ] && [ "$EV_MODE_B" = "passed" ] || { echo "Error: smoke failed"; exit 1; }
 
           sourceCommit="$ARTIFACT_SOURCE_COMMIT"
-          [ -n "$sourceCommit" ] || { echo "Error: source_commit required"; exit 1; }
+          if [ -z "$sourceCommit" ]; then echo "Error: source_commit is required"; exit 1; fi
 
           existing=$(gh release view "$INPUT_RELEASE_TAG" 2>/dev/null) && { echo "Release $INPUT_RELEASE_TAG already exists"; exit 1; } || true
 
