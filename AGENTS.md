@@ -1,10 +1,17 @@
 # AGENTS.md
 
-This file provides guidance to AI coding agents (Codex CLI, etc.) when working with code in this repository.
+This file provides guidance to AI coding agents when working with code in this repository.
 
 ## What This Is
 
 Cross-compile Flutter SDK for Termux (Android/Bionic ARM64). Produces a `.deb` package installable on Termux that enables `flutter run`, `flutter build apk`, and `flutter build linux`.
+
+## Current Version
+
+- Flutter: **3.47.2** (stable)
+- Dart: **3.13.2**
+- Target: aarch64 (ARM64)
+- Patches directory: `patches/3.47.2/`
 
 ## Build Commands
 
@@ -13,7 +20,7 @@ Cross-compile Flutter SDK for Termux (Android/Bionic ARM64). Produces a `.deb` p
 python3 build.py build_all --arch=arm64
 
 # Individual steps
-python3 build.py clone                                    # Clone Flutter 3.44.9
+python3 build.py clone                                    # Clone Flutter 3.47.2
 python3 build.py sync                                     # gclient sync (~30GB)
 python3 build.py patch_engine && python3 build.py patch_dart && python3 build.py patch_skia
 python3 build.py sysroot --arch=arm64                     # Assemble Termux sysroot from apt
@@ -31,26 +38,6 @@ python3 build.py build_android_gen_snapshot --arch=arm64 --mode=release
 python3 build.py debuild --arch=arm64                     # Package .deb
 ```
 
-## Code Architecture
-
-| File | Role |
-|------|------|
-| `build.py` | CLI entry point (Python Fire). `Build` class holds all commands. |
-| `build.toml` | Config: Flutter version, NDK path, sync paths, sysroot packages, patch locations |
-| `sysroot.py` | `Sysroot` class downloads Termux `.deb` packages async (aiohttp) and extracts into sysroot |
-| `package.py` | `Package` class reads `package.yaml`, resolves variable substitution, creates `.deb` |
-| `package.yaml` | Declarative artifact mapping: build output paths → Termux install paths |
-| `utils.py` | Helpers: arch mapping (`arm64→aarch64`), output path resolution, Termux detection |
-| `patches/{version}/` | Git patches for Engine, Dart VM, Skia (version-specific) |
-| `.github/workflows/ci.yml` | GitHub-hosted PR/push sanity checks |
-| `.github/workflows/build-deb.yml` | Manual self-hosted full `.deb` build / optional release publish |
-| `.github/workflows/device-smoke.yml` | Manual Windows+ADB Termux tablet smoke workflow |
-| `.github/workflows/release-check.yml` | Release asset metadata / SHA256 verifier |
-| `scripts/ci/check_repo.py` | Lightweight repo contract checker used by CI |
-| `scripts/device/` | Windows ADB driver and Termux-side smoke script |
-| `scripts/test/gh_e2e_test.sh` | GitHub Release clean-install E2E smoke script |
-| `docs/CI_CD.md` | CI/CD, runner, and device-lab guide |
-
 ## Lightweight Verification
 
 ```bash
@@ -60,24 +47,19 @@ python scripts/ci/check_repo.py
 git diff --check
 ```
 
-Self-hosted workflows are manual-only. Do not run expensive full build or tablet smoke automatically on PRs.
-
 ## Critical Implementation Details
 
 1. **`ninja flutter` does NOT build `dart` binary**. Must run `build_dart()` separately.
 2. **Only ARM64 APK gen_snapshot works**. 32-bit ARM fails (BoringSSL), x64 fails (sysroot mismatch).
 3. **Linux target builds all three modes** (debug, release, profile). `build_all()` runs configure+build for each mode.
-4. **`package.yaml` uses `safe_eval()`** for variable resolution — constrained evaluation with recursion limits, be careful with template strings.
-5. **`debuild()` auto-syncs** from Windows to WSL via `[sync]` config before packaging.
-6. **GN flag `is_termux=true`** activates custom BUILD.gn rules that add `-llog -lm` for Android logging symbols.
-7. **`utils.py __MODE__` must be `('debug', 'release', 'profile')`** — debug first! `Output.any` picks the first existing directory. If release comes first, `output.any` points to release (product mode) dart-sdk snapshots, breaking the entire Flutter CLI.
+4. **GN flag `is_termux=true`** activates custom BUILD.gn rules that add `-llog -lm` for Android logging symbols.
+5. **`utils.py __MODE__` must be `('debug', 'release', 'profile')`** — debug first!
 
 ## Termux Runtime: post_install.sh Auto-Fixes
 
 `post_install.sh` automatically handles these ARM64 compatibility issues:
 - **compileSdkVersion 36→34**: Termux aapt2 (v2.19) cannot load android-35/36 `android.jar`
-- **NDK clang wrappers**: Replaces x86_64 clang/clang++ with Termux ARM64 native wrappers (dynamic clang lib version)
-- **NDK llvm-objcopy**: Replaces x86_64 `llvm-objcopy`/`llvm-strip` with Termux ARM64 native binaries
+- **NDK clang wrappers**: Replaces x86_64 clang/clang++ with Termux ARM64 native wrappers
 - **Shebang fix**: All generated wrapper scripts use `#!/data/data/com.termux/files/usr/bin/sh`
 
 ## Termux Runtime: Per-Project Configuration
@@ -98,21 +80,17 @@ android {
 }
 ```
 
-## Build Output
-
-```
-flutter/engine/src/out/
-├── linux_debug_arm64/          # Main: dart-sdk, gen_snapshot, libflutter_linux_gtk.so
-├── linux_release_arm64/        # Release: gen_snapshot, libflutter_linux_gtk.so
-├── linux_profile_arm64/        # Profile: gen_snapshot, libflutter_linux_gtk.so
-├── android_release_arm64/      # Android gen_snapshot (release APK)
-└── android_profile_arm64/      # Android gen_snapshot (profile APK)
-```
-
 ## Environment
 
 - Build: WSL2 Ubuntu on Windows, NDK r27d at `/opt/android-ndk-r27d`
 - WSL path: `<workspace-root>/`
-- Target: aarch64, Flutter 3.44.9
-- Test device: `[REDACTED]` (Samsung SM-X716B / Android 16)
+- Target: aarch64, Flutter 3.47.2
+- Test device: Samsung SM-X716B / Android 16
 - Use PowerShell (not Git Bash) for `adb push` to avoid path mangling
+
+## Upgrade Notes (3.44.9 → 3.47.2)
+
+- Dart SDK: 3.12.2 → 3.13.2 (breaking changes possible)
+- Engine commit changed: must verify patches apply cleanly
+- New patches directory: `patches/3.47.2/`
+- Run `python3 build.py clone --force` to re-clone with new tag
