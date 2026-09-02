@@ -855,9 +855,17 @@ class Build:
             if not data.get('completed', False):
                 return False
 
-            # Required checkout roots
+            # Required checkout roots. Flutter keeps the engine source skeleton
+            # in the framework checkout; gclient materializes core third-party
+            # repositories below it.
             engine_src = src / 'engine' / 'src'
-            if not (engine_src.exists() and (engine_src / 'flutter').exists() and (engine_src / 'third_party').exists()):
+            required = (
+                engine_src / 'build',
+                engine_src / 'flutter',
+                engine_src / 'flutter' / 'third_party' / 'dart' / 'tools' / 'sdks' / 'dart-sdk',
+                engine_src / 'flutter' / 'third_party' / 'skia' / 'include' / 'private' / 'base' / 'SkFeatures.h',
+            )
+            if not all(path.exists() for path in required):
                 return False
 
             # Bound to Flutter HEAD
@@ -892,29 +900,13 @@ class Build:
         if not cfg_path.exists():
             default_gclient = '''solutions = [
   {
+    "custom_deps": {},
+    "deps_file": "DEPS",
     "managed": False,
     "name": ".",
-    "url": "https://github.com/flutter/flutter",
-    "deps_file": "DEPS",
     "safesync_url": "",
-    "custom_deps": {
-      "engine/src/fuchsia/sdk/linux": None,
-      "engine/src/third_party/google_fonts_for_unit_tests": None,
-      "engine/src/flutter/third_party/java/openjdk": None,
-    },
-    "custom_vars" : {
-      "setup_githooks" : False,
-      "use_cipd_goma" : False,
-      "download_emsdk" : False,
-      "download_dart_sdk" : False,
-      "download_linux_deps" : False,
-      "download_fuchsia_sdk" : False,
-      "download_android_deps" : False,
-      "download_windows_deps" : False,
-      "download_fuchsia_deps" : False,
-    },
-    "custom_hooks" : []
-  }
+    "url": "https://github.com/flutter/flutter.git",
+  },
 ]
 '''
             cfg_path.write_text(default_gclient, encoding='utf-8')
@@ -922,6 +914,22 @@ class Build:
         shutil.copy(cfg_path, os.path.join(src, '.gclient'))
         cmd = ['gclient', 'sync', '-DR', '--no-history']
         subprocess.run(cmd, cwd=src, check=True)
+
+        # Do not allow a partial dependency graph to reach patching or GN.
+        # In particular, Skia must be present before skia.patch is evaluated.
+        required = {
+            'engine/src/build': Path(src) / 'engine' / 'src' / 'build',
+            'engine/src/flutter': Path(src) / 'engine' / 'src' / 'flutter',
+            'engine/src/flutter/third_party/dart': Path(src) / 'engine' / 'src' / 'flutter' / 'third_party' / 'dart' / 'tools' / 'sdks' / 'dart-sdk',
+            'engine/src/flutter/third_party/skia': Path(src) / 'engine' / 'src' / 'flutter' / 'third_party' / 'skia' / 'include' / 'private' / 'base' / 'SkFeatures.h',
+        }
+        missing = [name for name, path in required.items() if not path.exists()]
+        if missing:
+            raise RuntimeError(
+                'gclient sync completed with missing required checkout(s): '
+                + ', '.join(missing)
+                + '. Use Flutter engine/scripts/standard.gclient without disabling core deps.'
+            )
 
         # Fix #5: package_config.json language version too old
         # 1. Replace prebuilt dart-sdk with matching version from build.toml

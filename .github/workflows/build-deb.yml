@@ -45,7 +45,7 @@ jobs:
     env:
       ARCH: ${{ inputs.arch }}
       DEPOT_DIR: ${{ github.workspace }}/depot_tools
-      ENGINE_ROOT: ${{ github.workspace }}/engine
+      ENGINE_ROOT: ${{ github.workspace }}/flutter/engine
       ANDROID_HOME: ${{ github.workspace }}/android-sdk
 
     steps:
@@ -120,8 +120,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            engine/src/out
-            engine/.gclient
+            flutter/engine/src/out
+            flutter/.gclient
           key: build-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'package.yaml', 'patches/**/*.patch', 'build.py', 'package.py', 'sysroot.py', 'utils.py') }}-${{ github.sha }}
           restore-keys: |
             build-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'package.yaml', 'patches/**/*.patch', 'build.py', 'package.py', 'sysroot.py', 'utils.py') }}-
