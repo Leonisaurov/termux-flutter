@@ -151,14 +151,19 @@ echo "  這可能需要幾分鐘，請耐心等待..."
 echo ""
 
 # 執行構建，預期可能失敗（AAPT2 問題）
-flutter build apk --release 2>&1 | tee /tmp/flutter_build.log || true
+: "${TMPDIR:=/data/data/com.termux/files/usr/tmp}"
+export TMPDIR
+mkdir -p "$TMPDIR"
+test -d "$TMPDIR" && test -w "$TMPDIR"
+BUILD_LOG="$TMPDIR/flutter_build.log"
+flutter build apk --release 2>&1 | tee "$BUILD_LOG" || true
 
 # 檢查是否有 AAPT2 錯誤
-if grep -q "EM_X86_64" /tmp/flutter_build.log 2>/dev/null; then
+if grep -q "EM_X86_64" "$BUILD_LOG" 2>/dev/null; then
     echo ""
     echo -e "${YELLOW}  檢測到 AAPT2 架構問題，正在修復...${NC}"
     NEED_AAPT2_FIX=true
-elif grep -q "Built build/app/outputs" /tmp/flutter_build.log 2>/dev/null; then
+elif grep -q "Built build/app/outputs" "$BUILD_LOG" 2>/dev/null; then
     echo ""
     echo -e "${GREEN}  首次構建成功！${NC}"
     NEED_AAPT2_FIX=false

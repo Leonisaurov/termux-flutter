@@ -5,11 +5,16 @@
 #
 # Usage: curl -sL https://raw.githubusercontent.com/ImL1s/termux-flutter-wsl/master/scripts/install/install_termux_flutter.sh -o ~/install.sh && bash ~/install.sh
 #
-# 目標狀態 (v3.44.9):
+# 目標狀態 (v3.47.2):
 #   - flutter doctor / create / build / run: 發布前需在乾淨 Termux 環境重新驗證
 #
 
 set -euo pipefail
+
+: "${TMPDIR:=/data/data/com.termux/files/usr/tmp}"
+export TMPDIR
+mkdir -p "$TMPDIR"
+test -d "$TMPDIR" && test -w "$TMPDIR"
 
 source "$(dirname "$0")/lib_common.sh" || {
     echo "Fetching lib_common.sh..."
@@ -46,7 +51,7 @@ pkg install -y openjdk-21 openjdk-17 git wget curl unzip android-tools
 
 echo -e "${GREEN}[3/${TOTAL_STEPS}]${NC} Downloading Flutter SDK..."
 
-WORK_DIR=$(mktemp -d)
+WORK_DIR=$(mktemp -d "$TMPDIR/flutter_install.XXXXXX")
 trap 'rm -rf "$WORK_DIR"; print_summary' EXIT
 cd "$WORK_DIR"
 FLUTTER_DEB="$WORK_DIR/flutter_${FLUTTER_VERSION}_aarch64.deb"
@@ -56,6 +61,9 @@ if [ ! -f "$FLUTTER_DEB" ]; then
 fi
 
 echo "Verifying SHA256 checksum..."
+if [ -z "$EXPECTED_SHA256" ]; then
+    EXPECTED_SHA256="$(resolve_release_sha256 "$FLUTTER_DEB_URL")" || { record_stage integrity failed; exit 30; }
+fi
 verify_sha256 "$FLUTTER_DEB" "$EXPECTED_SHA256" || { record_stage integrity failed; exit 30; }
 record_stage integrity success
 

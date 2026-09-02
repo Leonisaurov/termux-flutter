@@ -208,8 +208,15 @@ def check_installer_contract() -> None:
     toml_text = read("build.toml")
     import re as _re
     m = _re.search(r"tag\s*=\s*'([^']+)'", toml_text)
-    expected_ver = m.group(1) if m else "3.44.9"
-    if f'FLUTTER_VERSION="{expected_ver}"' not in text:
+    expected_ver = m.group(1) if m else ""
+    if not expected_ver:
+        fail("build.toml does not define a Flutter tag")
+        return
+    version_markers = (
+        f'FLUTTER_VERSION="{expected_ver}"',
+        f'FLUTTER_VERSION="${{FLUTTER_VERSION:-{expected_ver}}}"',
+    )
+    if not any(marker in text for marker in version_markers):
         fail(f"install_flutter_complete.sh default Flutter version is not {expected_ver}")
     if 'NDK_VERSION="29.0.14206865"' not in text:
         fail("install_flutter_complete.sh default NDK version is not r29")

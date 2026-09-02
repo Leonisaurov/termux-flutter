@@ -3,7 +3,9 @@
 echo "=== Testing gen_snapshot for Termux ==="
 
 # Copy gen_snapshot to Termux bin
-cp /data/local/tmp/gen_snapshot $PREFIX/bin/
+# Deliberate Android device staging path: the binary is pushed there by adb,
+# then copied into Termux; this is not a Termux runtime temporary directory.
+cp /data/local/tmp/gen_snapshot "$PREFIX/bin/"
 chmod +x $PREFIX/bin/gen_snapshot
 
 # Test version

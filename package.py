@@ -304,10 +304,10 @@ class Package(object):
             'output': Output(root, arch),
             'version': utils.engine_version(root),
             'architecture': utils.termux_arch(arch),
-            'framework_revision': kwargs.get('framework_revision') or '6b182d2c7585eba26d4edce0f97630effd256c33',
-            'framework_commit_date': kwargs.get('framework_commit_date') or '2026-08-05 17:04:07 +0000',
+            'framework_revision': kwargs.get('framework_revision') or 'd3b14c876900e553bc736ca19295fc09e3853e8e',
+            'framework_commit_date': kwargs.get('framework_commit_date') or '2026-08-26 23:07:51 +0000',
             'devtools_version': kwargs.get('devtools_version') or '2.42.0',
-            'dart_version': kwargs.get('dart_version') or '3.12.2',
+            'dart_version': kwargs.get('dart_version') or '3.13.2',
             'engine_commit': kwargs.get('engine_commit') or utils.engine_version(root),
         }
         self.defines = {

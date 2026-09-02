@@ -9,7 +9,7 @@ set -e
 # 配置區域 - 根據你的環境修改
 # =====================================================
 NDK_PATH="${NDK_PATH:-${ANDROID_NDK:-${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT}}}}"
-BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 ARCH="arm64"
 MODE="debug"
 
@@ -17,7 +17,7 @@ MODE="debug"
 # 主要流程
 # =====================================================
 
-cd "$BUILD_DIR"
+cd "$ROOT_DIR"
 
 echo "=== Step 1: 確保依賴已安裝 ==="
 pip3 install --user --break-system-packages gitpython pyyaml fire loguru 2>/dev/null || true
@@ -35,7 +35,7 @@ echo "=== Step 5: 打包 .deb ==="
 python3 build.py debuild --arch=$ARCH
 
 echo "=== 完成 ==="
-ls -lh $BUILD_DIR/flutter_*.deb
+ls -lh "$ROOT_DIR"/release/flutter_*.deb
 
 echo ""
 echo "在 Termux 上安裝："

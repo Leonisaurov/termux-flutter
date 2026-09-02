@@ -359,8 +359,10 @@ if [ "${TERMUX_TEST_MODE:-false}" = "true" ]; then
 fi
 
 # 版本配置
-FLUTTER_VERSION="3.44.9"
-EXPECTED_SHA256="8b32041a11452b8d995ba45dcc2bb196e4d841410c46871853a6f4c24acddd20"
+FLUTTER_VERSION="${FLUTTER_VERSION:-3.47.2}"
+RELEASE_TAG="${RELEASE_TAG:-v3.47.2-termux}"
+# Filled by the release pipeline or supplied by the caller; never reuse an old release hash.
+EXPECTED_SHA256="${EXPECTED_SHA256:-${FLUTTER_DEB_SHA256:-}}"
 
 # 其他版本配置
 ANDROID_SDK_EXPECTED_SHA256="fc727c848b8ca4e3011515850702adc1bf98ceae7205d7acc82d026bc94d2601"
@@ -412,7 +414,11 @@ fi
 TOTAL_STEPS=6
 
 # Allocate WORK_DIR early for all staging and downloads (#55)
-WORK_DIR=$(mktemp -d "${TMPDIR:-$PREFIX/tmp}/flutter_install.XXXXXX" 2>/dev/null || mktemp -d 2>/dev/null || mktemp -d -t flutter_install.XXXXXX)
+: "${TMPDIR:=/data/data/com.termux/files/usr/tmp}"
+export TMPDIR
+mkdir -p "$TMPDIR"
+test -d "$TMPDIR" && test -w "$TMPDIR"
+WORK_DIR=$(mktemp -d "$TMPDIR/flutter_install.XXXXXX")
 INSTALL_FAILED=false
 
 # ========================================
@@ -533,6 +539,9 @@ wget -q --show-progress "$FLUTTER_DEB_URL" -O "$FLUTTER_DEB" || { INSTALL_FAILED
 record_stage download success
 
 echo "驗證 Flutter SDK SHA256 校驗碼..."
+if [ -z "$EXPECTED_SHA256" ] && command -v resolve_release_sha256 >/dev/null 2>&1; then
+    EXPECTED_SHA256="$(resolve_release_sha256 "$FLUTTER_DEB_URL")" || { INSTALL_FAILED=true; record_stage integrity failed; exit 30; }
+fi
 verify_sha256 "$FLUTTER_DEB" "$EXPECTED_SHA256" || { INSTALL_FAILED=true; record_stage integrity failed; exit 30; }
 record_stage integrity success
 

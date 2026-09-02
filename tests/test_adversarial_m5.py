@@ -101,7 +101,7 @@ def test_adversarial_device_smoke_permissions():
     data = yaml.safe_load(text)
 
     permissions = data.get("permissions", {})
-    assert permissions.get("contents") == "write", "device-smoke.yml top-level permissions must contain contents: write"
+    assert permissions.get("contents") == "write", "device-smoke.yml must retain contents: write for release promotion"
     assert permissions.get("actions") == "read", "device-smoke.yml top-level permissions must contain actions: read"
 
 

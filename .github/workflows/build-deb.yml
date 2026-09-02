@@ -29,7 +29,7 @@ on:
           - ubuntu-latest-8-cores
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 concurrency:
@@ -102,20 +102,18 @@ jobs:
           path: |
             ${{ env.ENGINE_ROOT }}
             ~/.gcloud-gce-linux-sdk
-          key: engine-src-${{ hashFiles('build.toml') }}-${{ github.sha }}
+          key: engine-src-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', '.gclient') }}-${{ github.sha }}
           restore-keys: |
-            engine-src-${{ hashFiles('build.toml') }}-
-            engine-src-
+            engine-src-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', '.gclient') }}-
 
       - name: Cache sysroot
         id: cache-sysroot
         uses: actions/cache@v4
         with:
           path: sysroot
-          key: sysroot-${{ hashFiles('build.toml') }}-${{ github.sha }}
+          key: sysroot-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'sysroot.lock.json') }}-${{ github.sha }}
           restore-keys: |
-            sysroot-${{ hashFiles('build.toml') }}-
-            sysroot-
+            sysroot-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'sysroot.lock.json') }}-
 
       - name: Cache build artifacts
         id: cache-build
@@ -124,10 +122,9 @@ jobs:
           path: |
             engine/src/out
             engine/.gclient
-          key: build-${{ hashFiles('build.toml') }}-${{ github.sha }}
+          key: build-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'package.yaml', 'patches/**/*.patch', 'build.py', 'package.py', 'sysroot.py', 'utils.py') }}-${{ github.sha }}
           restore-keys: |
-            build-${{ hashFiles('build.toml') }}-
-            build-
+            build-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'package.yaml', 'patches/**/*.patch', 'build.py', 'package.py', 'sysroot.py', 'utils.py') }}-
 
       - name: Validate host toolchain contract
         shell: bash
@@ -148,9 +145,11 @@ jobs:
             ANDROID_SDK_ROOT="$ANDROID_HOME"
             mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
             if [ ! -d "$ANDROID_SDK_ROOT/cmdline-tools/latest" ]; then
-              curl -sSfL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdtools.zip
-              unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools
-              mv /tmp/cmdtools/cmdline-tools "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+              CI_TMPDIR="${RUNNER_TEMP:-$RUNNER_WORKSPACE/.tmp}"
+              mkdir -p "$CI_TMPDIR/cmdtools"
+              curl -sSfL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o "$CI_TMPDIR/cmdtools.zip"
+              unzip -q "$CI_TMPDIR/cmdtools.zip" -d "$CI_TMPDIR/cmdtools"
+              mv "$CI_TMPDIR/cmdtools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
             fi
             yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" "ndk;27.2.12479018" 2>/dev/null || true
             NDK_DIR="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
@@ -178,14 +177,24 @@ jobs:
           python -m py_compile build.py package.py sysroot.py utils.py
           bash -n scripts/install/post_install.sh
           python scripts/ci/check_repo.py
+          python scripts/ci/check_version_drift.py
 
       - name: Build all artifacts
         run: |
+          set -o pipefail
           EXTRA_ARGS=""
           if [ "${{ inputs.force }}" = "true" ]; then
             EXTRA_ARGS="--force"
           fi
-          python build.py build_all --arch="$ARCH" --force $EXTRA_ARGS
+          python build.py build_all --arch="$ARCH" $EXTRA_ARGS 2>&1 | tee build.log
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-termux-${{ env.FLUTTER_VERSION }}-${{ inputs.arch }}-build-log
+          path: build.log
+          if-no-files-found: warn
 
       - name: Collect artifact metadata
         id: artifact

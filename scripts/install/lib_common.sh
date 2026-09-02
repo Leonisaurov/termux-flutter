@@ -10,9 +10,10 @@ export CYAN='\033[0;36m'
 export NC='\033[0m'
 
 # Version info
-export FLUTTER_VERSION="3.44.9"
-export RELEASE_TAG="v3.44.9-termux"
-export EXPECTED_SHA256="${EXPECTED_SHA256:-${FLUTTER_DEB_SHA256:-8b32041a11452b8d995ba45dcc2bb196e4d841410c46871853a6f4c24acddd20}}"
+export FLUTTER_VERSION="${FLUTTER_VERSION:-3.47.2}"
+export RELEASE_TAG="${RELEASE_TAG:-v3.47.2-termux}"
+# Set FLUTTER_DEB_SHA256 in the release environment once the CI artifact is published.
+export EXPECTED_SHA256="${EXPECTED_SHA256:-${FLUTTER_DEB_SHA256:-}}"
 
 declare -A STAGE_STATUS
 
@@ -75,6 +76,18 @@ verify_sha256() {
     fi
     echo "  ✓ SHA256 verified ($actual)"
     return 0
+}
+
+resolve_release_sha256() {
+    local asset_url="$1"
+    local checksum=""
+
+    checksum=$(curl -fsSL --retry 3 "${asset_url}.sha256" 2>/dev/null | awk 'NF { print $1; exit }' || true)
+    if [[ ! "$checksum" =~ ^[[:xdigit:]]{64}$ ]]; then
+        echo -e "${RED}Error: release checksum sidecar is missing or invalid: ${asset_url}.sha256${NC}" >&2
+        return 1
+    fi
+    printf '%s\n' "$checksum"
 }
 
 preflight_check() {

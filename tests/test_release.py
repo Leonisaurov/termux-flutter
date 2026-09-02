@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_gha_workflow_permissions():
-    """Verify build-deb.yml and device-smoke.yml have contents: write and actions: read permissions."""
+    """Builds read the repository; device smoke may write the promoted release."""
     build_deb_path = ROOT / ".github" / "workflows" / "build-deb.yml"
     device_smoke_path = ROOT / ".github" / "workflows" / "device-smoke.yml"
 
@@ -25,10 +25,12 @@ def test_gha_workflow_permissions():
             # Check job level if not top-level
             for job in data.get("jobs", {}).values():
                 job_perms = job.get("permissions", {})
-                assert job_perms.get("contents") == "write", f"{path} job missing contents: write"
+                expected_contents = "write" if path == device_smoke_path else "read"
+                assert job_perms.get("contents") == expected_contents, f"{path} job has incorrect contents permission"
                 assert job_perms.get("actions") == "read", f"{path} job missing actions: read"
         else:
-            assert perms.get("contents") == "write", f"{path} missing top-level contents: write"
+            expected_contents = "write" if path == device_smoke_path else "read"
+            assert perms.get("contents") == expected_contents, f"{path} has incorrect top-level contents permission"
             assert perms.get("actions") == "read", f"{path} missing top-level actions: read"
 
 
@@ -201,4 +203,3 @@ def test_run_termux_smoke_ps1_parameter_and_logic_validation():
     assert "CONFIG_VERIFY_STATUS=0" in text, "Missing CONFIG_VERIFY_STATUS marker check"
     assert "evidence.json" in text, "Missing evidence.json handling"
     assert "apk_launch" in text or "appPid" in text, "Missing launch verification"
-

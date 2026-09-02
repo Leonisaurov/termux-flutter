@@ -9,10 +9,11 @@ set -u
 export PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 export PATH=$PREFIX/bin:$PREFIX/opt/flutter/bin:$PATH
 export HOME=/data/data/com.termux/files/home
-export TMPDIR=$PREFIX/tmp
-export RELEASE_TAG=${RELEASE_TAG:-v3.44.9-termux}
-export FLUTTER_VERSION=${FLUTTER_VERSION:-3.44.9}
-export EXPECTED_SHA256=${EXPECTED_SHA256:-${FLUTTER_DEB_SHA256:-8b32041a11452b8d995ba45dcc2bb196e4d841410c46871853a6f4c24acddd20}}
+: "${TMPDIR:=/data/data/com.termux/files/usr/tmp}"
+export TMPDIR
+export RELEASE_TAG=${RELEASE_TAG:-v3.47.2-termux}
+export FLUTTER_VERSION=${FLUTTER_VERSION:-3.47.2}
+export EXPECTED_SHA256=${EXPECTED_SHA256:-${FLUTTER_DEB_SHA256:-}}
 export DEB_NAME="flutter_${FLUTTER_VERSION}_aarch64.deb"
 export DEB_URL=${DEB_URL:-"https://github.com/ImL1s/termux-flutter-wsl/releases/download/${RELEASE_TAG}/${DEB_NAME}"}
 
@@ -67,6 +68,7 @@ echo "Version: $FLUTTER_VERSION"
 echo "URL: $DEB_URL"
 
 mkdir -p "$TMPDIR"
+test -d "$TMPDIR" && test -w "$TMPDIR"
 cd "$HOME" || exit 1
 
 run_step "Install prerequisites" pkg install -y wget openjdk-21 openjdk-17 git >/dev/null 2>&1 || true
@@ -76,6 +78,9 @@ echo "=== Download release deb ==="
 rm -f "$DEB_NAME"
 wget -q --show-progress "$DEB_URL" -O "$DEB_NAME"
 if [ -n "$EXPECTED_SHA256" ]; then
+    verify_sha256 "$DEB_NAME" "$EXPECTED_SHA256" || { fail "SHA256 mismatch"; exit 1; }
+else
+    EXPECTED_SHA256="$(resolve_release_sha256 "$DEB_URL")" || { fail "Release checksum unavailable"; exit 1; }
     verify_sha256 "$DEB_NAME" "$EXPECTED_SHA256" || { fail "SHA256 mismatch"; exit 1; }
 fi
 ls -lh "$DEB_NAME"

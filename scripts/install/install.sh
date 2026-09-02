@@ -29,13 +29,20 @@ pkg install -y x11-repo
 # Download deb
 echo "[2/5] Downloading flutter_${FLUTTER_VERSION}_aarch64.deb..."
 
-WORK_DIR=$(mktemp -d)
+: "${TMPDIR:=/data/data/com.termux/files/usr/tmp}"
+export TMPDIR
+mkdir -p "$TMPDIR"
+test -d "$TMPDIR" && test -w "$TMPDIR"
+WORK_DIR=$(mktemp -d "$TMPDIR/flutter_install.XXXXXX")
 trap 'rm -rf "$WORK_DIR"; print_summary' EXIT
 cd "$WORK_DIR"
 curl -L -o flutter.deb "$DEB_URL" || { record_stage download failed; exit 20; }
 record_stage download success
 
 echo "Verifying SHA256 checksum..."
+if [ -z "$EXPECTED_SHA256" ]; then
+    EXPECTED_SHA256="$(resolve_release_sha256 "$DEB_URL")" || { record_stage integrity failed; exit 30; }
+fi
 verify_sha256 flutter.deb "$EXPECTED_SHA256" || { record_stage integrity failed; exit 30; }
 record_stage integrity success
 

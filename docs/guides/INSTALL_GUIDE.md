@@ -1,6 +1,6 @@
-# Termux Flutter 3.44.9 安裝指南
+# Termux Flutter 3.47.2 安裝指南
 
-本指南適用於 `flutter_3.44.9_aarch64.deb`，目標是在 ARM64 Termux 上執行：
+本指南適用於 `flutter_3.47.2_aarch64.deb`，目標是在 ARM64 Termux 上執行：
 
 - `flutter doctor -v`
 - `flutter create`
@@ -8,17 +8,17 @@
 - `flutter build linux --release`
 - `flutter run` + hot reload（需要 ADB device 連線）
 
-## 已驗證版本
+## 目標版本（首次 package/device validation pending）
 
 | 項目 | 值 |
 |------|----|
-| Flutter | 3.44.9 |
-| Flutter Tools Dart | 3.12.2 |
-| Dart VM (`dartvm`) | post-install `dartvm` resolves to Dart 3.12.2 (`android_arm64`) |
+| Flutter | 3.47.2 |
+| Flutter Tools Dart | 3.13.2 |
+| Dart VM (`dartvm`) | post-install `dartvm` resolves to Dart 3.13.2 (`android_arm64`) |
 
 | 測試設備 | Samsung SM-X716B / Android 16 / ARM64 |
-| deb size | 177,161,976 bytes（約 169 MiB） |
-| SHA256 | `8b32041a11452b8d995ba45dcc2bb196e4d841410c46871853a6f4c24acddd20` |
+| deb size | Pending first reproducible build |
+| SHA256 | Published with the `.deb.sha256` companion asset |
 
 ## 系統需求
 
@@ -46,11 +46,11 @@ pkg update -y
 pkg install -y x11-repo git wget curl unzip openjdk-21 aapt2 android-tools cmake ninja clang
 
 cd ~
-wget https://github.com/ImL1s/termux-flutter-wsl/releases/download/v3.44.9-termux/flutter_3.44.9_aarch64.deb
-sha256sum flutter_3.44.9_aarch64.deb
-# 確認輸出為：8b32041a11452b8d995ba45dcc2bb196e4d841410c46871853a6f4c24acddd20
+wget https://github.com/ImL1s/termux-flutter-wsl/releases/download/v3.47.2-termux/flutter_3.47.2_aarch64.deb
+sha256sum flutter_3.47.2_aarch64.deb
+# Compare the output with flutter_3.47.2_aarch64.deb.sha256 from the release.
 
-dpkg -i flutter_3.44.9_aarch64.deb
+dpkg -i flutter_3.47.2_aarch64.deb
 apt --fix-broken install -y
 
 # 必跑：dpkg 只安裝檔案；這一步才會修補 Termux runtime。
@@ -94,7 +94,7 @@ flutter doctor -v
 
 預期重點：
 
-- `flutter --version` 顯示 Flutter 3.44.9。
+- `flutter --version` 顯示 Flutter 3.47.2。
 - `dart --version` 顯示 `android_arm64`（Termux JIT Dart）。
 - `dartvm --version` 顯示 `linux_arm64`（engine VM）。
 
@@ -182,7 +182,7 @@ flutter run -d <device_id>
 
 ### `PLATFORM_ABI_LIST` unresolved
 
-代表 post-install 的 Flutter Gradle plugin 模板或 Gradle cache 是舊的。更新到 v3.44.9 deb 後執行：
+代表 post-install 的 Flutter Gradle plugin 模板或 Gradle cache 是舊的。更新到 v3.47.2 deb 後執行：
 
 ```bash
 bash $PREFIX/share/flutter/post_install.sh

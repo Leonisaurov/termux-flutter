@@ -4,6 +4,11 @@
 
 set -e
 
+: "${TMPDIR:=/data/data/com.termux/files/usr/tmp}"
+export TMPDIR
+mkdir -p "$TMPDIR"
+test -d "$TMPDIR" && test -w "$TMPDIR"
+
 echo "=========================================="
 echo "Flutter Termux Post-Install Configuration"
 echo "=========================================="
@@ -111,7 +116,7 @@ apply_patches() {
 
         if [ "$MODE" == "status" ] || [ "$MODE" == "check" ]; then
             local tmp_check
-            tmp_check=$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/patch_check_${$}_${RANDOM}")
+            tmp_check=$(mktemp "$TMPDIR/patch_check.XXXXXX")
             cp "$target_file" "$tmp_check" 2>/dev/null || true
             if $patch_func "$tmp_check" 2>/dev/null && cmp -s "$target_file" "$tmp_check"; then
                 echo "  ✓ $patch_name: already correct"
@@ -562,7 +567,7 @@ apply_patches
 # 1.5b. Fix engine.stamp and engine.realm (required for Maven artifact resolution)
 echo "[1.5b/13] Fixing engine.stamp and engine.realm, and injecting framework version tag..."
 mkdir -p "$FLUTTER_ROOT/bin/cache"
-[ -s "$FLUTTER_ROOT/bin/internal/engine.version" ] || echo -n "77e2e94772b6eb43759e34ed1ad7da4674e19cab" > "$FLUTTER_ROOT/bin/internal/engine.version"
+[ -s "$FLUTTER_ROOT/bin/internal/engine.version" ] || echo -n "a804b261645ef8c13eb3d5c44a5c2fb0340c5539" > "$FLUTTER_ROOT/bin/internal/engine.version"
 local_eng_ver="$(cat "$FLUTTER_ROOT/bin/internal/engine.version" 2>/dev/null | tr -d '\n\r')"
 echo -n "$local_eng_ver" > "$FLUTTER_ROOT/bin/cache/engine.stamp" 2>/dev/null || true
 echo -n "$local_eng_ver" > "$FLUTTER_ROOT/bin/cache/engine_stamp.stamp" 2>/dev/null || true
@@ -584,7 +589,7 @@ if [ ! -s "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradle/wrapper/gradl
         WRAPPER_REL_PATH="$(cat "$FLUTTER_ROOT/bin/internal/gradle_wrapper.version" | tr -d '\n\r')"
     fi
     if [ -n "$WRAPPER_REL_PATH" ]; then
-        cd "${TMPDIR:-$PREFIX/tmp}"
+        cd "$TMPDIR"
         ( set +e; curl -s -L "https://storage.googleapis.com/$WRAPPER_REL_PATH" | tar -xz -C "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper" 2>/dev/null ) || true
         rm -f "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradle/wrapper/gradle-wrapper.properties" 2>/dev/null || true
         rm -f "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/NOTICE" 2>/dev/null || true
@@ -607,7 +612,7 @@ if [ ! -d "$FLUTTER_ROOT/bin/cache/artifacts/material_fonts" ] || [ -z "$(ls -A 
         FONTS_REL_PATH="$(cat "$FLUTTER_ROOT/bin/internal/material_fonts.version" | tr -d '\n\r')"
     fi
     if [ -n "$FONTS_REL_PATH" ]; then
-        cd "${TMPDIR:-$PREFIX/tmp}"
+        cd "$TMPDIR"
         ( set +e; curl -s -L "https://storage.googleapis.com/$FONTS_REL_PATH" -o fonts.zip 2>/dev/null && unzip -q -o fonts.zip -d "$FLUTTER_ROOT/bin/cache/artifacts/material_fonts" 2>/dev/null && rm -f fonts.zip ) || true
     fi
 fi
@@ -634,11 +639,11 @@ if ! [ -x "$GIT_BIN" ] && ! command -v "$GIT_BIN" >/dev/null 2>&1; then
 fi
 
 # Load canonical metadata from packaged manifest or embedded source-of-truth constants
-CANONICAL_FLUTTER_VER="3.44.9"
-CANONICAL_FRAMEWORK_REV="6b182d2c7585eba26d4edce0f97630effd256c33"
-CANONICAL_FRAMEWORK_DATE="2026-08-05 17:04:07 +0000"
+CANONICAL_FLUTTER_VER="3.47.2"
+CANONICAL_FRAMEWORK_REV="d3b14c876900e553bc736ca19295fc09e3853e8e"
+CANONICAL_FRAMEWORK_DATE="2026-08-26 23:07:51 +0000"
 CANONICAL_ENGINE_REV="$local_eng_ver"
-CANONICAL_DART_VER="3.12.2"
+CANONICAL_DART_VER="3.13.2"
 CANONICAL_DEVTOOLS_VER="2.42.0"
 CANONICAL_CHANNEL="stable"
 CANONICAL_REPO_URL="https://github.com/flutter/flutter.git"
@@ -821,7 +826,7 @@ chmod 644 "$FLUTTER_ROOT/bin/cache/flutter.version.json"
 echo "  ✓ Canonical flutter.version.json generated ($CANONICAL_FLUTTER_VER stable, framework=$CANONICAL_FRAMEWORK_REV)"
 
 # Get engine version for downloads
-ENGINE_VERSION=$(cat $FLUTTER_ROOT/bin/internal/engine.version 2>/dev/null || echo "77e2e94772b6eb43759e34ed1ad7da4674e19cab")
+ENGINE_VERSION=$(cat $FLUTTER_ROOT/bin/internal/engine.version 2>/dev/null || echo "a804b261645ef8c13eb3d5c44a5c2fb0340c5539")
 
 # 0. 下載官方 Dart SDK snapshots (修復 flutter run hot reload)
 echo "[0/13] Downloading official Dart SDK snapshots (for hot reload)..."
@@ -831,7 +836,7 @@ SNAPSHOTS_DIR=$DART_SDK/bin/snapshots
 # Check if key snapshot is missing
 if [ ! -f "$SNAPSHOTS_DIR/dds_aot.dart.snapshot" ]; then
     echo "  Downloading dart-sdk-linux-arm64.zip..."
-    cd "${TMPDIR:-$PREFIX/tmp}"
+    cd "$TMPDIR"
     ( set +e; curl -L -o dart-sdk.zip "$SNAPSHOTS_URL" >/dev/null 2>&1 ) || true
     if [ -f dart-sdk.zip ]; then
         echo "  Extracting snapshots..."
@@ -1013,7 +1018,7 @@ SPLITEOF
 
     # core-lambda-stubs.jar
     if [ ! -f "$BUILD_TOOLS/core-lambda-stubs.jar" ]; then
-        MANIFEST_TMP="${TMPDIR:-$PREFIX/tmp}/MANIFEST.MF"
+        MANIFEST_TMP="$TMPDIR/MANIFEST.MF"
         echo "Manifest-Version: 1.0" > "$MANIFEST_TMP"
         jar cfm "$BUILD_TOOLS/core-lambda-stubs.jar" "$MANIFEST_TMP" 2>/dev/null || true
         rm -f "$MANIFEST_TMP"
@@ -1049,7 +1054,7 @@ fi
 if [ "$is_mode_b" = "true" ]; then
     echo "  Validating Mode B toolchain (API 35+ / AAB)..."
     AAPT2_EXE="$BT_DIR/35.0.0/aapt2"
-    TMP_DIR=$(mktemp -d "${TMPDIR:-$PREFIX/tmp}/mode_b_test.XXXXXX")
+    TMP_DIR=$(mktemp -d "$TMPDIR/mode_b_test.XXXXXX")
     TMP_RES_DIR="$TMP_DIR/res/values"
     mkdir -p "$TMP_RES_DIR"
     echo '<resources><string name="test">test</string></resources>' > "$TMP_RES_DIR/strings.xml"
@@ -1268,7 +1273,7 @@ finalize_flutter_tools_cache() {
 
     # Ensure environment variables are active during snapshot generation
     export PATH="$PREFIX/bin:$PATH"
-    export TMPDIR="${TMPDIR:-$PREFIX/tmp}"
+    export TMPDIR
     if [ -n "$REVISION" ]; then
         export FLUTTER_PREBUILT_ENGINE_VERSION="$REVISION"
     fi
@@ -1315,7 +1320,9 @@ ensure_profile_env() {
         cat > "$profile_file" << 'EOF'
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 export PATH=${PREFIX}/opt/flutter/bin:${PATH}
-export TMPDIR="${PREFIX}/tmp"
+: "${TMPDIR:=/data/data/com.termux/files/usr/tmp}"
+export TMPDIR
+mkdir -p "$TMPDIR"
 if [ -z "${ANDROID_NDK_HOME:-}" ]; then
   for ndk in ${PREFIX}/opt/android-sdk/ndk/*/; do
     [ -d "$ndk" ] && export ANDROID_NDK_HOME="${ndk%/}" && break

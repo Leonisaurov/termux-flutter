@@ -278,30 +278,43 @@ def main():
     expected_asset = flutter_cfg.get("asset_name")
     expected_sha256 = flutter_cfg.get("sha256")
     expected_size = flutter_cfg.get("size")
+    lightweight_check = os.environ.get("LIGHTWEIGHT_CHECK") == "1"
 
-    if not all([expected_tag, expected_asset, expected_sha256]):
-        print("Error: Missing release_tag, asset_name, or sha256 in build.toml")
+    if not expected_tag or not expected_asset:
+        print("Error: Missing release_tag or asset_name in build.toml")
         sys.exit(1)
 
     if not isinstance(expected_asset, str) or not expected_asset.strip():
         print("Error: Invalid or empty asset_name in build.toml")
         sys.exit(1)
 
-    # Validate SHA256 hex format strictly (64 hex characters)
-    try:
-        expected_sha256 = validate_sha256_format(expected_sha256)
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    if expected_size is not None:
-        if not isinstance(expected_size, int) or expected_size <= 0:
-            print(f"Error: Invalid size in manifest: {expected_size} (must be > 0)")
+    # A freshly configured tree has no artifact yet, so its digest and size
+    # are intentionally empty/zero.  Lightweight CI validates the manifest
+    # shape; full release verification obtains the authoritative digest from
+    # the published .sha256 companion below.
+    if expected_sha256 is not None:
+        # Keep surrounding whitespace here: a pinned manifest hash must be
+        # exactly 64 hex characters.  Only a truly empty value means
+        # "artifact not published yet".
+        expected_sha256 = str(expected_sha256)
+    if expected_sha256:
+        try:
+            expected_sha256 = validate_sha256_format(expected_sha256)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
+    elif not lightweight_check:
+        expected_sha256 = None
+
+    if expected_size in (None, 0):
+        expected_size = None
+    elif not isinstance(expected_size, int) or expected_size <= 0:
+        print(f"Error: Invalid size in manifest: {expected_size} (must be > 0)")
+        sys.exit(1)
 
     print(f"Manifest expected tag: {expected_tag}")
     print(f"Manifest expected asset: {expected_asset}")
-    print(f"Manifest expected SHA256: {expected_sha256}")
+    print(f"Manifest expected SHA256: {expected_sha256 or '(not pinned; awaiting artifact)'}")
     if expected_size:
         print(f"Manifest expected size: {expected_size}")
 
@@ -327,7 +340,7 @@ def main():
     print(f"Verifying release tag: {target_tag}")
 
     # 3. Check LIGHTWEIGHT_CHECK before published-release API lookup
-    if os.environ.get("LIGHTWEIGHT_CHECK") == "1":
+    if lightweight_check:
         runner_temp = os.environ.get("RUNNER_TEMP")
         download_path = None
         if runner_temp and (Path(runner_temp) / expected_asset).is_file():
@@ -341,17 +354,23 @@ def main():
                 for byte_block in iter(lambda: f.read(4096), b""):
                     sha256_hash.update(byte_block)
             actual_sha256 = sha256_hash.hexdigest().lower()
-            if actual_sha256 != expected_sha256.lower():
+            if expected_sha256 and actual_sha256 != expected_sha256.lower():
                 print(f"Error: Local file SHA256 mismatch in lightweight check mode!\nExpected: {expected_sha256}\nActual:   {actual_sha256}")
                 sys.exit(1)
             actual_size = download_path.stat().st_size
             if expected_size is not None and actual_size != expected_size:
                 print(f"Error: Local file size mismatch in lightweight check mode!\nExpected: {expected_size}\nActual:   {actual_size}")
                 sys.exit(1)
-            print(f"LIGHTWEIGHT_CHECK: Local file SHA256 verified ({actual_sha256}).")
-            print(f"Release manifest OK: {target_tag} | {expected_asset} | {actual_size} bytes | SHA256 format verified: {expected_sha256[:8]}...")
+            if expected_sha256:
+                print(f"LIGHTWEIGHT_CHECK: Local file SHA256 verified ({actual_sha256}).")
+                sha_summary = f"SHA256 format verified: {expected_sha256[:8]}..."
+            else:
+                print(f"LIGHTWEIGHT_CHECK: Local file present; computed SHA256 ({actual_sha256}) is not pinned in build.toml.")
+                sha_summary = "SHA256 not pinned"
+            print(f"Release manifest OK: {target_tag} | {expected_asset} | {actual_size} bytes | {sha_summary}")
         else:
-            print(f"LIGHTWEIGHT_CHECK enabled (no local file present): Verified manifest structure and valid SHA256 hex syntax ({expected_sha256[:8]}...). Skipping network API lookup.")
+            sha_summary = f"valid SHA256 hex syntax ({expected_sha256[:8]}...)" if expected_sha256 else "SHA256 not pinned yet"
+            print(f"LIGHTWEIGHT_CHECK enabled (no local file present): Verified manifest structure and {sha_summary}. Skipping network API lookup.")
         sys.exit(0)
 
 
@@ -416,14 +435,7 @@ def main():
             sys.exit(1)
         print(f"  ✓ Exact deb size verified against manifest: {actual_size} bytes")
 
-    # 5. Cross-check digest if provided by github
-    digest = (asset.get("digest") or "").lower()
-    expected_digest = f"sha256:{expected_sha256.lower()}"
-    if digest and digest != expected_digest:
-        print(f"Error: GitHub asset digest mismatch. Expected {expected_digest}, got {digest}")
-        sys.exit(1)
-
-    # 6. Verify contents of auxiliary assets (Strict Fail-Closed)
+    # 5. Verify contents of auxiliary assets (Strict Fail-Closed)
     # Check .sha256 file
     sha_url = assets[f"{expected_asset}.sha256"].get("browser_download_url")
     if not sha_url:
@@ -432,12 +444,29 @@ def main():
     try:
         with urllib.request.urlopen(urllib.request.Request(sha_url, headers=headers)) as resp:
             sha_content = resp.read().decode("utf-8-sig").strip().split()[0]
-            if sha_content.lower() != expected_sha256.lower():
+            try:
+                sha_content = validate_sha256_format(sha_content)
+            except ValueError as e:
+                print(f"Error: Invalid .sha256 asset content: {e}")
+                sys.exit(1)
+            if expected_sha256 and sha_content.lower() != expected_sha256.lower():
                 print(f"Error: .sha256 asset content mismatch! Expected {expected_sha256}, got {sha_content}")
                 sys.exit(1)
+            if not expected_sha256:
+                expected_sha256 = sha_content
+                print(f"  ✓ Adopted published companion SHA256 as release digest: {expected_sha256[:8]}...")
             print(f"  ✓ Verified companion .sha256 asset matches expected hash: {sha_content[:8]}...")
     except Exception as e:
         print(f"Error: Failed to fetch/verify companion .sha256 asset: {e}")
+        sys.exit(1)
+
+    # 6. Cross-check digest if provided by GitHub.  This comes after the
+    # companion check because the manifest may intentionally leave sha256
+    # blank before the first artifact is published.
+    digest = (asset.get("digest") or "").lower()
+    expected_digest = f"sha256:{expected_sha256.lower()}"
+    if digest and digest != expected_digest:
+        print(f"Error: GitHub asset digest mismatch. Expected {expected_digest}, got {digest}")
         sys.exit(1)
 
     # Check .size.txt file

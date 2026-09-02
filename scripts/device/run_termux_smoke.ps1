@@ -496,6 +496,7 @@ $verifierCommitMeasured = if ($VerifierCommit) { $VerifierCommit } else {
     try { (git rev-parse HEAD 2>$null).Trim().ToLower() } catch { if ($CommitSha) { $CommitSha } else { "unknown" } }
 }
 
+# Deliberate Android device staging path for adb; never used as Termux TMPDIR.
 $remoteEvidenceTmp = "/data/local/tmp/evidence.json"
 $remoteEvidenceSdcard = "/sdcard/Download/evidence.json"
 $rawEv = $null

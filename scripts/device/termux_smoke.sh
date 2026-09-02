@@ -117,7 +117,10 @@ trap write_evidence_json EXIT
 export PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 export HOME="${HOME:-/data/data/com.termux/files/home}"
 export PATH="$PREFIX/opt/flutter/bin:$PREFIX/bin:$PATH"
-export TMPDIR="$PREFIX/tmp"
+: "${TMPDIR:=/data/data/com.termux/files/usr/tmp}"
+export TMPDIR
+mkdir -p "$TMPDIR"
+test -d "$TMPDIR" && test -w "$TMPDIR"
 export ANDROID_HOME="$PREFIX/opt/android-sdk"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 JAVA_HOME=$(find "$PREFIX/lib/jvm" -maxdepth 1 -type d -name 'java-*-openjdk' | sort -V | tail -1)
@@ -293,7 +296,7 @@ ls -lh build/app/outputs/flutter-apk/*.apk 2>/dev/null || true
 
 # Task 2: APK ZIP Layout & Copy checks
 APK=build/app/outputs/flutter-apk/app-release.apk
-APK_LIST="${TMPDIR:-/data/data/com.termux/files/usr/tmp}/apk_contents.txt"
+APK_LIST="$TMPDIR/apk_contents.txt"
 rm -f "$APK_LIST"
 unzip -l "$APK" > "$APK_LIST"
 UNZIP_STATUS=$?
@@ -354,6 +357,7 @@ fi
 
 write_evidence_json
 echo "Wrote evidence to $EVIDENCE_JSON"
+# /data/local/tmp is deliberate adb staging on Android, not Termux TMPDIR.
 rm -f /sdcard/Download/evidence.json /data/local/tmp/evidence.json 2>/dev/null || true
 cp "$EVIDENCE_JSON" /sdcard/Download/evidence.json 2>/dev/null || true
 cp "$EVIDENCE_JSON" /data/local/tmp/evidence.json 2>/dev/null || true

@@ -232,7 +232,7 @@ class Build:
         api = cfg.get('ndk', {}).get('api', 35)
         tag = cfg.get('flutter', {}).get('tag')
         release_tag = cfg.get('flutter', {}).get('release_tag', f'v{tag}-termux' if tag else None)
-        dart_version = cfg.get('flutter', {}).get('dart_version', '3.12.1')
+        dart_version = cfg.get('flutter', {}).get('dart_version', '3.13.2')
         sha256 = cfg.get('flutter', {}).get('sha256')
         asset_name = cfg.get('flutter', {}).get('asset_name', f'flutter_{tag}_aarch64.deb' if tag else None)
         repo = cfg.get('flutter', {}).get('repo')
@@ -259,10 +259,10 @@ class Build:
         release = cfg.get('package', {}).get('path', '.')
         patches = cfg.get('patch')
 
-        framework_revision = cfg.get('flutter', {}).get('framework_revision', '6b182d2c7585eba26d4edce0f97630effd256c33')
-        framework_commit_date = cfg.get('flutter', {}).get('framework_commit_date', '2026-08-05 17:04:07 +0000')
+        framework_revision = cfg.get('flutter', {}).get('framework_revision', 'd3b14c876900e553bc736ca19295fc09e3853e8e')
+        framework_commit_date = cfg.get('flutter', {}).get('framework_commit_date', '2026-08-26 23:07:51 +0000')
         devtools_version = cfg.get('flutter', {}).get('devtools_version', '2.42.0')
-        engine_commit = cfg.get('flutter', {}).get('engine_commit', '5a2a6a42cce67f965cf540fcecf616faca624aa1')
+        engine_commit = cfg.get('flutter', {}).get('engine_commit', 'a804b261645ef8c13eb3d5c44a5c2fb0340c5539')
 
         self.ndk = ndk
         self.tag = tag
@@ -1569,9 +1569,11 @@ class Build:
 
         # Step 12: configure and build android gen_snapshot profile
         android_prof_dir = self.root / 'engine/src/out/android_profile_arm64'
-        android_prof_gen1 = android_prof_dir / 'exe.stripped/gen_snapshot'
-        android_prof_gen2 = android_prof_dir / 'clang_arm64/gen_snapshot'
-        android_prof_gen = android_prof_gen1 if android_prof_gen1.exists() else android_prof_gen2
+        # Keep the profile output layout identical to release.  The newer GN
+        # toolchain can emit exe.stripped/gen_snapshot, but the packaging
+        # contract is clang_arm64/gen_snapshot; build_android_gen_snapshot()
+        # normalizes both layouts into that directory.
+        android_prof_gen = android_prof_dir / 'clang_arm64/gen_snapshot'
         if not force and android_prof_gen.exists() and self.verify_stage_receipt(android_prof_dir, [android_prof_gen]):
             logger.info(f'[12/{total}] android gen_snapshot profile output already exists, skipping (use --force to rebuild).')
         else:
@@ -1580,6 +1582,8 @@ class Build:
             t0 = time.time()
             self.configure_android(arch='arm64', mode='profile')
             self.build_android_gen_snapshot(arch='arm64', mode='profile', jobs=jobs)
+            if not android_prof_gen.exists():
+                raise RuntimeError(f'Android profile gen_snapshot was not produced at {android_prof_gen}')
             self.save_stage_receipt(android_prof_dir, [android_prof_gen])
             logger.info(f'✓ android gen_snapshot profile completed in {time.time() - t0:.1f}s')
 

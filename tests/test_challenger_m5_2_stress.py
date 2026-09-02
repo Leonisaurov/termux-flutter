@@ -9,16 +9,16 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-def test_workflow_permissions_contents_write():
-    """Verify both build-deb.yml and device-smoke.yml have top-level contents: write permissions."""
+def test_workflow_permissions_are_scoped():
+    """Verify build and release workflows use the narrowest required permissions."""
     build_deb_path = REPO_ROOT / ".github" / "workflows" / "build-deb.yml"
     device_smoke_path = REPO_ROOT / ".github" / "workflows" / "device-smoke.yml"
 
-    for path in [build_deb_path, device_smoke_path]:
-        content = path.read_text(encoding="utf-8")
-        assert "permissions:" in content, f"Missing permissions block in {path.name}"
-        assert "contents: write" in content, f"Missing contents: write in {path.name}"
-        assert "actions: read" in content, f"Missing actions: read in {path.name}"
+    build_content = build_deb_path.read_text(encoding="utf-8")
+    smoke_content = device_smoke_path.read_text(encoding="utf-8")
+    assert "permissions:" in build_content and "contents: read" in build_content
+    assert "permissions:" in smoke_content and "contents: write" in smoke_content
+    assert "actions: read" in build_content and "actions: read" in smoke_content
 
 def test_release_promotion_target_commit_binding():
     """Verify release promotion in device-smoke.yml binds tag to --target with valid source commit."""

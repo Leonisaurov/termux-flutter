@@ -4,6 +4,8 @@
 
 set -e
 
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+
 echo "=========================================="
 echo "Flutter Termux 編譯環境設置"
 echo "=========================================="
@@ -19,7 +21,7 @@ sudo apt install -y \
 
 # 2. 安裝 Python 依賴
 echo "[2/4] 安裝 Python 依賴..."
-pip3 install gitpython fire pyyaml loguru tomli requests
+pip3 install -r "$ROOT_DIR/requirements.txt"
 
 # 3. 下載 Android NDK r27
 echo "[3/4] 下載 Android NDK r27d..."
@@ -29,6 +31,7 @@ NDK_DIR="/opt/android-ndk-${NDK_VERSION}"
 if [ -d "$NDK_DIR" ]; then
     echo "NDK 已存在: $NDK_DIR"
 else
+    # This helper runs on the WSL build host, not inside Termux.
     cd /tmp
     wget -q --show-progress https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
     echo "解壓縮 NDK..."

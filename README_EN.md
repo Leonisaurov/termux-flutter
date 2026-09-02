@@ -17,8 +17,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Flutter-3.44.9-02569B?logo=flutter" alt="Flutter Version"/>
-  <img src="https://img.shields.io/badge/Dart-3.12.2-0175C2?logo=dart" alt="Dart Version"/>
+  <img src="https://img.shields.io/badge/Flutter-3.47.2-02569B?logo=flutter" alt="Flutter Version"/>
+  <img src="https://img.shields.io/badge/Dart-3.13.2-0175C2?logo=dart" alt="Dart Version"/>
   <img src="https://img.shields.io/badge/Target-aarch64-green" alt="Target"/>
   <a href="https://github.com/ImL1s/termux-flutter-wsl/actions/workflows/ci.yml"><img src="https://github.com/ImL1s/termux-flutter-wsl/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="License"/>
@@ -53,7 +53,7 @@ Flutter's ARM64 target support does not mean the official SDK can be used as an 
 This repository packages a Flutter SDK for Termux ARM64:
 
 - Cross-compiles Flutter Engine, Dart runtime, and required host tools from WSL/Linux.
-- Assembles an installable `flutter_3.44.9_aarch64.deb` package for Termux.
+- Assembles an installable `flutter_3.47.2_aarch64.deb` package for Termux.
 - Runs `post_install.sh` to patch Flutter Tools, the Gradle plugin, NDK/build-tools wrappers, Android SDK constraints, and Termux shebangs.
 - Enables `flutter doctor`, `flutter create`, `flutter build apk`, `flutter build linux`, and hot reload through Termux:X11.
 
@@ -61,12 +61,12 @@ This repository packages a Flutter SDK for Termux ARM64:
 
 | Item | Value |
 | --- | --- |
-| Flutter | `3.44.9` |
-| Dart | `3.12.2` |
+| Flutter | `3.47.2` |
+| Dart | `3.13.2` |
 | Architecture | `aarch64` / `arm64-v8a` |
-| Release asset | [`flutter_3.44.9_aarch64.deb`](https://github.com/ImL1s/termux-flutter-wsl/releases/tag/v3.44.9-termux) |
-| Size | `174,157,728` bytes (~166 MiB) |
-| SHA256 | `8b32041a11452b8d995ba45dcc2bb196e4d841410c46871853a6f4c24acddd20` |
+| Release asset | [`flutter_3.47.2_aarch64.deb`](https://github.com/ImL1s/termux-flutter-wsl/releases/tag/v3.47.2-termux) |
+| Size | Pending first 3.47.2 build |
+| SHA256 | Published with the `.deb.sha256` companion asset |
 
 ### Device smoke test
 
@@ -105,17 +105,17 @@ bash install_flutter_complete.sh
 
 ```bash
 pkg update && pkg install -y wget
-wget https://github.com/ImL1s/termux-flutter-wsl/releases/download/v3.44.9-termux/flutter_3.44.9_aarch64.deb
-sha256sum flutter_3.44.9_aarch64.deb
+wget https://github.com/ImL1s/termux-flutter-wsl/releases/download/v3.47.2-termux/flutter_3.47.2_aarch64.deb
+sha256sum flutter_3.47.2_aarch64.deb
 
-dpkg -i flutter_3.44.9_aarch64.deb
+dpkg -i flutter_3.47.2_aarch64.deb
 apt --fix-broken install -y
 bash $PREFIX/share/flutter/post_install.sh
 source ~/.bashrc
 flutter --version
 ```
 
-Do not install the file if its SHA256 differs from the value in the release table above.
+Before installing, verify the SHA256 against the release's `.deb.sha256` companion asset.
 
 ## Create a project and build an APK
 
@@ -233,7 +233,7 @@ termux-flutter-wsl/
 │   ├── device/               # ADB → Termux smoke automation
 │   ├── install/              # Termux install and post-install patches
 │   └── test/                 # Release / Termux E2E smoke scripts
-├── patches/3.44.9/           # Flutter Engine / Dart / Skia patches
+├── patches/3.47.2/           # Flutter Engine / Dart / Skia patches
 ├── build.py                  # Main build CLI
 ├── build.toml                # Version, NDK, sysroot, and patch configuration
 ├── package.yaml              # .deb artifact mapping

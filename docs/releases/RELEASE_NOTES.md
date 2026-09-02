@@ -1,19 +1,19 @@
-# Flutter 3.44.9 for Termux ARM64
+# Flutter 3.47.2 for Termux ARM64
 
-**Flutter 3.44.9 / Dart 3.12.2 for Android-bionic ARM64 hosts.**
+**Flutter 3.47.2 / Dart 3.13.2 for Android-bionic ARM64 hosts.**
 
-This release updates the Termux Flutter SDK package to Flutter 3.44.9. It incorporates all post-v3.44.2 installer hardening, dynamic JAVA_HOME auto-detection, robust PREFIX quoting under `set -euo pipefail`, and refreshed Termux toolchain sysroot packages.
+This release updates the Termux Flutter SDK package to Flutter 3.47.2. It incorporates all post-v3.44.2 installer hardening, dynamic JAVA_HOME auto-detection, robust PREFIX quoting under `set -euo pipefail`, and refreshed Termux toolchain sysroot packages.
 
 ## Package
 
 | Item | Value |
 |------|-------|
-| Package | `flutter_3.44.9_aarch64.deb` |
-| Size | 174,157,728 bytes (~166.1 MiB) |
-| SHA256 | `8b32041a11452b8d995ba45dcc2bb196e4d841410c46871853a6f4c24acddd20` |
-| Flutter | 3.44.9 |
-| Flutter Tools Dart | 3.12.2 |
-| Dart VM | post-install `dartvm` resolves to Dart 3.12.2 (`android_arm64`) |
+| Package | `flutter_3.47.2_aarch64.deb` |
+| Size | Pending first 3.47.2 build |
+| SHA256 | Published with the `.deb.sha256` companion asset |
+| Flutter | 3.47.2 |
+| Flutter Tools Dart | 3.13.2 |
+| Dart VM | post-install `dartvm` resolves to Dart 3.13.2 (`android_arm64`) |
 | Target host | Termux / Android bionic / ARM64 |
 
 ## Install
@@ -21,34 +21,35 @@ This release updates the Termux Flutter SDK package to Flutter 3.44.9. It incorp
 ```bash
 pkg update -y
 pkg install -y x11-repo wget openjdk-21 openjdk-17
-wget https://github.com/ImL1s/termux-flutter-wsl/releases/download/v3.44.9-termux/flutter_3.44.9_aarch64.deb
-dpkg -i flutter_3.44.9_aarch64.deb
+wget https://github.com/ImL1s/termux-flutter-wsl/releases/download/v3.47.2-termux/flutter_3.47.2_aarch64.deb
+dpkg -i flutter_3.47.2_aarch64.deb
 apt --fix-broken install -y
 bash $PREFIX/share/flutter/post_install.sh
 source $PREFIX/etc/profile.d/flutter.sh
 flutter doctor -v
 ```
 
-## Verified
+## Validation status
 
-Device smoke on Samsung SM-X716B / Android 16 / ARM64 Termux:
+The 3.47.2 source and patch contracts are updated. The first `.deb` build and
+Samsung SM-X716B / Android 16 device smoke are pending publication/ execution.
 
 | Command | Result |
 |---------|--------|
-| `flutter --version` | ✅ Flutter 3.44.9 |
-| `dart --version` | ✅ Dart 3.12.2 on `android_arm64` |
-| `dartvm --version` | ✅ Dart 3.12.2 on `linux_arm64` |
-| `flutter doctor -v` | ✅ completes; unknown channel / no connected device are expected warnings |
-| `flutter create --platforms=android,linux` | ✅ |
-| `flutter build apk --release --target-platform android-arm64 --no-tree-shake-icons` | ✅ ARM64 APK produced |
-| `flutter build linux --release` | ✅ ARM64 Linux bundle produced |
-| deb artifact validator | ✅ `dart`, `dartvm`, `dartaotruntime` executable |
+| `flutter --version` | Pending first package build |
+| `dart --version` | Pending first package build |
+| `dartvm --version` | Pending first package build |
+| `flutter doctor -v` | Pending device smoke |
+| `flutter create --platforms=android,linux` | Pending device smoke |
+| `flutter build apk --release --target-platform android-arm64 --no-tree-shake-icons` | Pending device smoke |
+| `flutter build linux --release` | Pending device smoke |
+| deb artifact validator | Pending first package build |
 
 ## Highlights
 
-### Flutter 3.44.9 update
+### Flutter 3.47.2 update
 
-- Updated package metadata, NDK configurations, and patches to target Flutter 3.44.9 (Dart 3.12.2).
+- Updated package metadata, NDK configurations, and patches to target Flutter 3.47.2 (Dart 3.13.2).
 - Keeps Flutter CLI on Termux JIT Dart while preserving engine VM tools for snapshots.
 
 ### Installer & Environment Hardening
@@ -64,7 +65,7 @@ Device smoke on Samsung SM-X716B / Android 16 / ARM64 Termux:
 ### Technical Details
 
 - Build output directories: `linux_debug_arm64/`, `linux_release_arm64/`, `linux_profile_arm64/`, `android_release_arm64/`, `android_profile_arm64/`
-- Deb package size is ~169MB.
+- Deb package size will be recorded after the first reproducible build.
 
 ## Required per-project Android settings
 

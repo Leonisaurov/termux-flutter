@@ -2,7 +2,7 @@
 """Acceptance Criteria Verification Runner.
 
 Validates all requirements R1 to R4 in ORIGINAL_REQUEST.md and PROJECT.md:
-1. Release URL tag repair (no stale download/v3.44.2/ URLs without -termux tag)
+1. Release URL tag repair (all active download URLs match build.toml)
 2. HTTP HEAD response for FLUTTER_DEB_URL (returns 200/302)
 3. Single source of version management (release_tag in build.toml)
 4. build.py sync() uses self.dart_version (no hardcoded '3.12.0' in sync())
@@ -41,6 +41,20 @@ PASSED_CHECKS: list[str] = []
 EXCLUDE_URL_CHECK_FILES = {"ORIGINAL_REQUEST.md"}
 
 
+def current_release_config() -> tuple[str, str, str]:
+    """Return the active release tag, Flutter version, and package name."""
+    if tomllib is None:
+        content = (ROOT / "build.toml").read_text(encoding="utf-8")
+        tag = re.search(r"^tag\s*=\s*['\"]([^'\"]+)", content, re.MULTILINE).group(1)
+        release_tag = re.search(r"^release_tag\s*=\s*['\"]([^'\"]+)", content, re.MULTILINE).group(1)
+    else:
+        with (ROOT / "build.toml").open("rb") as handle:
+            flutter = tomllib.load(handle).get("flutter", {})
+        tag = str(flutter["tag"])
+        release_tag = str(flutter["release_tag"])
+    return tag, release_tag, f"flutter_{tag}_aarch64.deb"
+
+
 def record_pass(check_name: str) -> None:
     PASSED_CHECKS.append(check_name)
     print(f"[PASS] {check_name}")
@@ -53,8 +67,8 @@ def record_fail(check_name: str, message: str) -> None:
 
 def check_stale_url_tags() -> None:
     check_name = "1. Release URL tag repair (check superseded/untagged URLs)"
-    stale_patterns = ["download/v3.44.2", "download/v3.44.9/"]
     found_matches: list[str] = []
+    _, expected_release_tag, _ = current_release_config()
 
     search_paths: list[Path] = []
     # *.md and *.sh at root (excluding ORIGINAL_REQUEST.md)
@@ -76,10 +90,14 @@ def check_stale_url_tags() -> None:
     for path in sorted(set(search_paths)):
         try:
             content = path.read_text(encoding="utf-8", errors="ignore")
-            for sp in stale_patterns:
-                if sp in content:
+            for found_tag, found_asset in re.findall(r"releases/download/([^/]+)/([^\s\"')`]+)", content):
+                # Android SDK/NDK helpers use their own release tags.  This
+                # invariant is only about the Flutter .deb download URL.
+                if not found_asset.startswith("flutter_") or "$" in found_tag or "{" in found_tag:
+                    continue
+                if found_tag != expected_release_tag:
                     rel = path.relative_to(ROOT)
-                    found_matches.append(f"{rel} ({sp})")
+                    found_matches.append(f"{rel} (found {found_tag}, expected {expected_release_tag})")
         except Exception as e:
             record_fail(check_name, f"Error reading {path}: {e}")
 
@@ -91,7 +109,8 @@ def check_stale_url_tags() -> None:
 
 def check_http_head_release_deb() -> None:
     check_name = "2. HTTP HEAD response for FLUTTER_DEB_URL"
-    url = "https://github.com/ImL1s/termux-flutter-wsl/releases/download/v3.44.9-termux/flutter_3.44.9_aarch64.deb"
+    _, release_tag, asset_name = current_release_config()
+    url = f"https://github.com/ImL1s/termux-flutter-wsl/releases/download/{release_tag}/{asset_name}"
     try:
         req = urllib.request.Request(
             url,
@@ -109,7 +128,8 @@ def check_http_head_release_deb() -> None:
 
 
 def check_build_toml_release_tag() -> None:
-    check_name = "3. build.toml defines release_tag = 'v3.44.9-termux'"
+    _, expected, _ = current_release_config()
+    check_name = f"3. build.toml defines release_tag = '{expected}'"
     toml_path = ROOT / "build.toml"
     if not toml_path.is_file():
         record_fail(check_name, "build.toml does not exist")
@@ -123,7 +143,6 @@ def check_build_toml_release_tag() -> None:
         m = re.search(r'release_tag\s*=\s*["\']([^"\']+)["\']', content)
         release_tag = m.group(1) if m else ""
 
-    expected = "v3.44.9-termux"
     if release_tag == expected:
         record_pass(check_name)
     else:
@@ -131,7 +150,7 @@ def check_build_toml_release_tag() -> None:
 
 
 def check_build_py_no_hardcoded_dart_version() -> None:
-    check_name = "4. build.py sync() has no hardcoded '3.12.0'"
+    check_name = "4. build.py sync() has no hardcoded Dart SDK version"
     build_py = ROOT / "build.py"
     if not build_py.is_file():
         record_fail(check_name, "build.py does not exist")

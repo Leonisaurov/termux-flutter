@@ -18,7 +18,7 @@ on:
         required: false
         default: false
       release_tag:
-        description: "Tag for the release (e.g. v3.44.9-termux)"
+        description: "Tag for the release (e.g. v3.47.2-termux)"
         required: false
       timeout_minutes:
         description: Smoke test timeout in minutes

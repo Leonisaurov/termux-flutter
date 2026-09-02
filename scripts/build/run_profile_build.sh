@@ -1,6 +1,9 @@
 #!/bin/bash
+set -e
 # Clean PATH
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/iml1s/projects/termux-flutter/depot_tools
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+DEPOT_TOOLS_DIR="${DEPOT_TOOLS_DIR:-$ROOT_DIR/depot_tools}"
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$DEPOT_TOOLS_DIR"
 
-cd /home/iml1s/projects/termux-flutter/flutter/engine/src
+cd "$ROOT_DIR/flutter/engine/src"
 exec ninja -C out/android_profile_arm64 -j24 gen_snapshot

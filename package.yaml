@@ -280,10 +280,10 @@ resource:
     mode: 0o755
 
   # Android gen_snapshot for profile mode (flutter build apk --profile)
-  # Note: Profile mode builds gen_snapshot in root directory (not clang_arm64/)
+  # build.py normalizes profile output into clang_arm64/ for packaging.
   android_gen_snapshot_arm64_profile:
     source:
-      - $android_profile_out/exe.stripped/gen_snapshot
+      - $android_profile_out/clang_arm64/gen_snapshot
     output:
       - $eng/android-arm64-profile/linux-$arch
     define:
