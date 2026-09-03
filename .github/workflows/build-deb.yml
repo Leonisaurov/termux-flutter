@@ -45,7 +45,7 @@ jobs:
     env:
       ARCH: ${{ inputs.arch }}
       DEPOT_DIR: ${{ github.workspace }}/depot_tools
-      ENGINE_ROOT: ${{ github.workspace }}/flutter/engine
+      ENGINE_ROOT: ${{ github.workspace }}/flutter
       ANDROID_HOME: ${{ github.workspace }}/android-sdk
 
     steps:

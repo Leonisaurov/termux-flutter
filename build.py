@@ -902,6 +902,10 @@ class Build:
   {
     "custom_deps": {
       "engine/src/flutter/third_party/skia": "https://skia.googlesource.com/skia.git@8df24be66531469e576a806749a0202ae26b8d08",
+      "engine/src/flutter/build/rbe": None,
+      "engine/src/third_party/fuchsia-sdk/sdk": None,
+      "engine/src/flutter/tools/fuchsia/test_scripts": None,
+      "engine/src/flutter/tools/fuchsia/gn-sdk": None,
     },
     "deps_file": "DEPS",
     "managed": False,
@@ -922,10 +926,14 @@ class Build:
             cfg_path.write_text(default_gclient, encoding='utf-8')
 
         shutil.copy(cfg_path, os.path.join(src, '.gclient'))
-        # Use Flutter's normal public dependency conditions and force a fresh
-        # materialization of the configured graph. The checked-in .gclient
-        # explicitly pins Skia and disables private RBE/Fuchsia-only content.
-        cmd = ['gclient', 'sync', '-DR', '--no-history', '--force']
+        # Materialize the complete public graph. Skia is an unconditional core
+        # dependency, but the Flutter DEPS file also contains host-conditional
+        # entries; using process-all-deps makes the required checkout explicit
+        # on CI. Private RBE and Fuchsia-only entries are disabled in .gclient.
+        cmd = [
+            'gclient', 'sync', '-DR', '--no-history',
+            '--process-all-deps', '--force',
+        ]
         subprocess.run(cmd, cwd=src, check=True)
 
         # Do not allow a partial dependency graph to reach patching or GN.
@@ -941,7 +949,7 @@ class Build:
             raise RuntimeError(
                 'gclient sync completed with missing required checkout(s): '
                 + ', '.join(missing)
-                + '. Use Flutter engine/scripts/standard.gclient without disabling core deps.'
+                + '. The CI dependency graph is incomplete.'
             )
 
         # Fix #5: package_config.json language version too old
