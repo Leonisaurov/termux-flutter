@@ -912,7 +912,14 @@ class Build:
             cfg_path.write_text(default_gclient, encoding='utf-8')
 
         shutil.copy(cfg_path, os.path.join(src, '.gclient'))
-        cmd = ['gclient', 'sync', '-DR', '--no-history']
+        # Flutter's DEPS graph includes core sources such as Skia alongside
+        # host/platform-conditional entries. A complete engine build must
+        # materialize the whole graph; otherwise gclient can finish its hooks
+        # successfully with Skia absent on a Linux CI host.
+        cmd = [
+            'gclient', 'sync', '-DR', '--no-history',
+            '--process-all-deps', '--force',
+        ]
         subprocess.run(cmd, cwd=src, check=True)
 
         # Do not allow a partial dependency graph to reach patching or GN.
