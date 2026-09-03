@@ -900,26 +900,32 @@ class Build:
         if not cfg_path.exists():
             default_gclient = '''solutions = [
   {
-    "custom_deps": {},
+    "custom_deps": {
+      "engine/src/flutter/third_party/skia": "https://skia.googlesource.com/skia.git@8df24be66531469e576a806749a0202ae26b8d08",
+    },
     "deps_file": "DEPS",
     "managed": False,
     "name": ".",
     "safesync_url": "",
     "url": "https://github.com/flutter/flutter.git",
+    "custom_vars": {
+      "download_emsdk": False,
+      "download_dart_sdk": False,
+      "download_linux_deps": False,
+      "download_fuchsia_deps": False,
+      "download_android_deps": True,
+      "use_rbe": False,
+    },
   },
 ]
 '''
             cfg_path.write_text(default_gclient, encoding='utf-8')
 
         shutil.copy(cfg_path, os.path.join(src, '.gclient'))
-        # Flutter's DEPS graph includes core sources such as Skia alongside
-        # host/platform-conditional entries. A complete engine build must
-        # materialize the whole graph; otherwise gclient can finish its hooks
-        # successfully with Skia absent on a Linux CI host.
-        cmd = [
-            'gclient', 'sync', '-DR', '--no-history',
-            '--process-all-deps', '--force',
-        ]
+        # Use Flutter's normal public dependency conditions and force a fresh
+        # materialization of the configured graph. The checked-in .gclient
+        # explicitly pins Skia and disables private RBE/Fuchsia-only content.
+        cmd = ['gclient', 'sync', '-DR', '--no-history', '--force']
         subprocess.run(cmd, cwd=src, check=True)
 
         # Do not allow a partial dependency graph to reach patching or GN.
