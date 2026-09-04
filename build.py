@@ -1032,7 +1032,10 @@ class Build:
                     shutil.rmtree(dart_sdk_dir)
                     with zipfile.ZipFile(zip_path, 'r') as zf:
                         zf.extractall(dart_sdk_dir.parent)
-                    for bin_path in (dart_sdk_dir / 'bin').iterdir():
+                    # The archive also contains executable VM helpers under
+                    # bin/utils (notably gen_snapshot). Preserve executable
+                    # permissions for every file in the SDK bin tree.
+                    for bin_path in (dart_sdk_dir / 'bin').rglob('*'):
                         if bin_path.is_file():
                             bin_path.chmod(bin_path.stat().st_mode | 0o111)
 
