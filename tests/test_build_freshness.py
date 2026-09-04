@@ -193,7 +193,10 @@ def test_is_sync_complete_valid_match(tmp_path, monkeypatch):
     root = tmp_path / "flutter"
     engine_src = root / "engine" / "src"
     (engine_src / "flutter").mkdir(parents=True)
-    (engine_src / "third_party").mkdir(parents=True)
+    (engine_src / "flutter" / "third_party" / "dart" / "tools" / "sdks" / "dart-sdk").mkdir(parents=True)
+    skia_header = engine_src / "flutter" / "third_party" / "skia" / "include" / "private" / "SkFeatures.h"
+    skia_header.parent.mkdir(parents=True)
+    skia_header.touch()
 
     gclient_file = tmp_path / ".gclient"
     gclient_content = b"solutions = [custom]"

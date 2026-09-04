@@ -863,7 +863,7 @@ class Build:
                 engine_src / 'build',
                 engine_src / 'flutter',
                 engine_src / 'flutter' / 'third_party' / 'dart' / 'tools' / 'sdks' / 'dart-sdk',
-                engine_src / 'flutter' / 'third_party' / 'skia' / 'include' / 'private' / 'base' / 'SkFeatures.h',
+                engine_src / 'flutter' / 'third_party' / 'skia' / 'include' / 'private' / 'SkFeatures.h',
             )
             if not all(path.exists() for path in required):
                 return False
@@ -930,7 +930,7 @@ class Build:
         subprocess.run(cmd, cwd=src, check=True)
 
         skia_dir = Path(src) / 'engine' / 'src' / 'flutter' / 'third_party' / 'skia'
-        skia_header = skia_dir / 'include' / 'private' / 'base' / 'SkFeatures.h'
+        skia_header = skia_dir / 'include' / 'private' / 'SkFeatures.h'
         if not skia_header.exists():
             skia_url = 'https://skia.googlesource.com/skia.git'
             skia_revision = '8df24be66531469e576a806749a0202ae26b8d08'
@@ -977,7 +977,7 @@ class Build:
             'engine/src/build': Path(src) / 'engine' / 'src' / 'build',
             'engine/src/flutter': Path(src) / 'engine' / 'src' / 'flutter',
             'engine/src/flutter/third_party/dart': Path(src) / 'engine' / 'src' / 'flutter' / 'third_party' / 'dart' / 'tools' / 'sdks' / 'dart-sdk',
-            'engine/src/flutter/third_party/skia': Path(src) / 'engine' / 'src' / 'flutter' / 'third_party' / 'skia' / 'include' / 'private' / 'base' / 'SkFeatures.h',
+            'engine/src/flutter/third_party/skia': Path(src) / 'engine' / 'src' / 'flutter' / 'third_party' / 'skia' / 'include' / 'private' / 'SkFeatures.h',
         }
         missing = [name for name, path in required.items() if not path.exists()]
         if missing:
