@@ -902,10 +902,6 @@ class Build:
   {
     "custom_deps": {
       "engine/src/flutter/third_party/skia": "https://skia.googlesource.com/skia.git@8df24be66531469e576a806749a0202ae26b8d08",
-      "engine/src/flutter/build/rbe": None,
-      "engine/src/third_party/fuchsia-sdk/sdk": None,
-      "engine/src/flutter/tools/fuchsia/test_scripts": None,
-      "engine/src/flutter/tools/fuchsia/gn-sdk": None,
     },
     "deps_file": "DEPS",
     "managed": False,
@@ -926,15 +922,54 @@ class Build:
             cfg_path.write_text(default_gclient, encoding='utf-8')
 
         shutil.copy(cfg_path, os.path.join(src, '.gclient'))
-        # Materialize the complete public graph. Skia is an unconditional core
-        # dependency, but the Flutter DEPS file also contains host-conditional
-        # entries; using process-all-deps makes the required checkout explicit
-        # on CI. Private RBE and Fuchsia-only entries are disabled in .gclient.
-        cmd = [
-            'gclient', 'sync', '-DR', '--no-history',
-            '--process-all-deps', '--force',
-        ]
+        # Keep Flutter's host conditions enabled: process-all-deps also pulls
+        # the private flutter_internal RBE package on public runners. The
+        # checked-in config pins Skia, and the fallback below repairs the rare
+        # gclient state in which that public core checkout is omitted.
+        cmd = ['gclient', 'sync', '-DR', '--no-history', '--force']
         subprocess.run(cmd, cwd=src, check=True)
+
+        skia_dir = Path(src) / 'engine' / 'src' / 'flutter' / 'third_party' / 'skia'
+        skia_header = skia_dir / 'include' / 'private' / 'base' / 'SkFeatures.h'
+        if not skia_header.exists():
+            skia_url = 'https://skia.googlesource.com/skia.git'
+            skia_revision = '8df24be66531469e576a806749a0202ae26b8d08'
+            logger.warning(
+                'gclient did not materialize the pinned Skia checkout; '
+                'repairing it directly at %s', skia_revision
+            )
+            skia_dir.parent.mkdir(parents=True, exist_ok=True)
+            if skia_dir.exists() and not (skia_dir / '.git').exists():
+                if any(skia_dir.iterdir()):
+                    raise RuntimeError(
+                        f'Skia checkout path is non-empty but is not a git repo: {skia_dir}'
+                    )
+                skia_dir.rmdir()
+            if not skia_dir.exists():
+                subprocess.run(['git', 'init', str(skia_dir)], check=True)
+            try:
+                subprocess.run(
+                    ['git', '-C', str(skia_dir), 'remote', 'get-url', 'origin'],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                )
+            except subprocess.CalledProcessError:
+                subprocess.run(
+                    ['git', '-C', str(skia_dir), 'remote', 'add', 'origin', skia_url],
+                    check=True,
+                )
+            subprocess.run(
+                ['git', '-C', str(skia_dir), 'fetch', '--no-tags', '--depth=1', 'origin', skia_revision],
+                check=True,
+            )
+            subprocess.run(
+                ['git', '-C', str(skia_dir), 'checkout', '--detach', 'FETCH_HEAD'],
+                check=True,
+            )
+            if not skia_header.exists():
+                raise RuntimeError(
+                    f'Skia checkout completed but required header is still missing: {skia_header}'
+                )
 
         # Do not allow a partial dependency graph to reach patching or GN.
         # In particular, Skia must be present before skia.patch is evaluated.

@@ -4,13 +4,6 @@ solutions = [
       # Flutter 3.47.2's Skia pin. Keep this explicit because the CI host
       # must build the Termux/Bionic variant from the complete Skia checkout.
       "engine/src/flutter/third_party/skia": "https://skia.googlesource.com/skia.git@8df24be66531469e576a806749a0202ae26b8d08",
-      # These entries are private or unrelated to the Linux engine build. They
-      # must stay disabled even when CI asks gclient to materialize all public
-      # dependency conditions.
-      "engine/src/flutter/build/rbe": None,
-      "engine/src/third_party/fuchsia-sdk/sdk": None,
-      "engine/src/flutter/tools/fuchsia/test_scripts": None,
-      "engine/src/flutter/tools/fuchsia/gn-sdk": None,
     },
     "deps_file": "DEPS",
     "managed": False,
