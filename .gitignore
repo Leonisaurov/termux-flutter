@@ -57,6 +57,7 @@ node_modules/
 .ninja_log
 .ninja_deps
 .gclient
+.gclient_previous_sync_commits
 .omx/
 .omc/
 build.local.toml
