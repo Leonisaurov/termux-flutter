@@ -38,9 +38,16 @@ python3 build.py build_android_gen_snapshot --arch=arm64 --mode=release
 python3 build.py debuild --arch=arm64                     # Package .deb
 ```
 
-## Lightweight Verification
+## Setup & Test
 
 ```bash
+# Python deps (required for build.py, sysroot.py, package.py)
+pip install -r requirements.txt
+
+# Unit tests (fast, no engine build)
+pytest tests/
+
+# Lightweight verification (CI runs these on every PR)
 python -m py_compile build.py package.py sysroot.py utils.py scripts/ci/check_repo.py
 bash -n scripts/install/post_install.sh scripts/test/gh_e2e_test.sh scripts/device/termux_smoke.sh
 python scripts/ci/check_repo.py
@@ -54,6 +61,8 @@ git diff --check
 3. **Linux target builds all three modes** (debug, release, profile). `build_all()` runs configure+build for each mode.
 4. **GN flag `is_termux=true`** activates custom BUILD.gn rules that add `-llog -lm` for Android logging symbols.
 5. **`utils.py __MODE__` must be `('debug', 'release', 'profile')`** — debug first!
+6. **Dart 3.10+ requires `dartvm` binary** next to `dart`. The package.yaml maps `exe.unstripped/dartvm` from debug build output. If missing, Flutter commands fail with "dartvm not found".
+7. **Patches are version-specific**. `patches/{tag}/` must match `build.toml` tag exactly. Copying patches from a prior version is a starting point — they often need rebasing for engine/Dart API changes.
 
 ## Termux Runtime: post_install.sh Auto-Fixes
 
