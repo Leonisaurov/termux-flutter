@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 import pytest
 
@@ -11,6 +12,18 @@ POST_INSTALL = REPO_ROOT / "scripts" / "install" / "post_install.sh"
 
 
 from conftest import to_bash_path
+
+
+def canonical_provenance():
+    """Canonical version provenance, read from build.toml (the single source of truth).
+
+    scripts/ci/check_version_drift.py::check_post_install_script() enforces that the
+    CANONICAL_* constants baked into post_install.sh equal these build.toml values, so
+    deriving expectations here keeps these tests honest across Flutter upgrades instead
+    of freezing the previous release's revision/Dart version.
+    """
+    with open(REPO_ROOT / "build.toml", "rb") as f:
+        return tomllib.load(f)["flutter"]
 
 
 def create_mock_env(tmp_path):
@@ -505,10 +518,11 @@ def test_post_install_dummy_git_repo_stable_branch_and_version_json(tmp_path):
     assert data["frameworkVersion"] == "3.44.0"
     assert data["flutterVersion"] == "3.44.0"
     assert data["repositoryUrl"] == "https://github.com/flutter/flutter.git"
-    assert data["frameworkRevision"] == "6b182d2c7585eba26d4edce0f97630effd256c33"
-    assert data["frameworkCommitDate"] == "2026-08-05 17:04:07 +0000"
-    assert data["dartSdkVersion"] == "3.12.2"
-    assert data["devToolsVersion"] == "2.42.0"
+    canonical = canonical_provenance()
+    assert data["frameworkRevision"] == canonical["framework_revision"]
+    assert data["frameworkCommitDate"] == canonical["framework_commit_date"]
+    assert data["dartSdkVersion"] == canonical["dart_version"]
+    assert data["devToolsVersion"] == canonical["devtools_version"]
 
 
 def test_post_install_contaminated_synthetic_repo_repair(tmp_path):
@@ -566,7 +580,7 @@ def test_post_install_contaminated_synthetic_repo_repair(tmp_path):
     data = json.loads(version_json_file.read_text(encoding="utf-8"))
     assert data["frameworkVersion"] == "3.44.0"
     assert data["channel"] == "stable"
-    assert data["frameworkRevision"] == "6b182d2c7585eba26d4edce0f97630effd256c33"
+    assert data["frameworkRevision"] == canonical_provenance()["framework_revision"]
 
 
 def test_post_install_real_user_repo_preserved_non_destructive(tmp_path):
@@ -613,7 +627,7 @@ def test_post_install_dart_sdk_version_semantic_not_stamp(tmp_path):
 
     version_json = flutter_root / "bin" / "cache" / "flutter.version.json"
     data = json.loads(version_json.read_text(encoding="utf-8"))
-    assert data["dartSdkVersion"] == "3.12.2"
+    assert data["dartSdkVersion"] == canonical_provenance()["dart_version"]
     assert "5a2a6a42" not in data["dartSdkVersion"]
 
 
