@@ -143,6 +143,40 @@ async def _download_packages(out, pkgs_info):
         ])
 
 
+def _write_lock_data(lock_file, lock_data):
+    """Persist the sysroot lock file with a stable, sorted layout."""
+    with open(lock_file, 'w', encoding='utf-8') as f:
+        json.dump(lock_data, f, indent=2, sort_keys=True)
+
+
+def _write_sysroot_lock_entry(lock_file, arch, arch_name, packages, tree_hash):
+    """Write/refresh one arch entry (package versions + tree_hash) in the lock file.
+
+    Used both by the explicit lock refresh (`sysroot_lock`) and by the self-healing
+    path in build(), so a build never leaves an inconsistent lock behind.
+    """
+    lock_data = {}
+    if lock_file.exists():
+        try:
+            with open(lock_file, 'r', encoding='utf-8') as f:
+                lock_data = json.load(f)
+        except Exception:
+            lock_data = {}
+    if not isinstance(lock_data, dict):
+        lock_data = {}
+
+    entry = {
+        'arch': arch,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'tree_hash': tree_hash,
+        'packages': packages,
+    }
+    lock_data[arch] = entry
+    if arch != arch_name:
+        lock_data[arch_name] = entry
+    _write_lock_data(lock_file, lock_data)
+
+
 async def _resolve_packages(sess, arch, sysroot_data):
     if not sysroot_data:
         return {}
@@ -498,26 +532,7 @@ class Sysroot:
                     _apply_sysroot_transformations(staging_tmp)
                     tree_hash = compute_tree_hash(staging_tmp)
 
-                lock_data = {}
-                if self.lock_file.exists():
-                    try:
-                        with open(self.lock_file, 'r', encoding='utf-8') as f:
-                            lock_data = json.load(f)
-                    except Exception:
-                        pass
-
-                created_at = datetime.now(timezone.utc).isoformat()
-                entry = {
-                    'arch': arch,
-                    'created_at': created_at,
-                    'tree_hash': tree_hash,
-                    'packages': locked_pkgs
-                }
-                lock_data[arch] = entry
-                if arch != arch_name:
-                    lock_data[arch_name] = entry
-                with open(self.lock_file, 'w', encoding='utf-8') as f:
-                    json.dump(lock_data, f, indent=2, sort_keys=True)
+                _write_sysroot_lock_entry(self.lock_file, arch, arch_name, locked_pkgs, tree_hash)
                 logger.info(f'✓ Updated lock file for {arch} ({arch_name}) at {self.lock_file.name} (tree_hash: {tree_hash})')
 
 
@@ -570,8 +585,14 @@ class Sysroot:
         logger.info(f'✓ Sysroot for {arch} looks valid (tree_hash verified: {actual_hash}).')
         return True
 
-    def build(self, arch: str = 'arm64', locked: bool = True):
-        """建立 sysroot，預設 shadow 啟用 --locked"""
+    def build(self, arch: str = 'arm64', locked: bool = True, refresh_lock: bool = True):
+        """建立 sysroot，預設 shadow 啟用 --locked
+
+        ``refresh_lock``: when a pinned package can no longer be downloaded (Termux
+        purges old versions from its rolling repos), re-resolve the current versions
+        from the repository index, retry, and rewrite sysroot.lock.json instead of
+        failing the release build. Set it to False for strict lock semantics.
+        """
         arch_name = utils.termux_arch(arch)
         if not self.data:
             logger.info('no work to do.')
@@ -616,12 +637,18 @@ class Sysroot:
 
         async def _do_build():
             nonlocal pkgs_info, expected_tree_hash
-            if not locked:
+            lock_refreshed = False
+            refresh_packages = None
+
+            async def _resolve_current_packages():
                 timeout = aiohttp.ClientTimeout(total=500)
                 conn = aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())
                 async with aiohttp.ClientSession(timeout=timeout, connector=conn) as sess:
-                    resolved = await _resolve_packages(sess, arch, self.data)
-                    pkgs_info = list(resolved.values())
+                    return await _resolve_packages(sess, arch, self.data)
+
+            if not locked:
+                resolved = await _resolve_current_packages()
+                pkgs_info = list(resolved.values())
 
             # Staging build
             staging_out = self.path.parent / f"{self.path.name}.staging"
@@ -630,7 +657,34 @@ class Sysroot:
 
             try:
                 with tempfile.TemporaryDirectory() as tmp:
-                    debs = await _download_packages(tmp, pkgs_info)
+                    try:
+                        debs = await _download_packages(tmp, pkgs_info)
+                    except Exception as download_error:
+                        if not locked or not refresh_lock:
+                            raise
+                        # Termux keeps rolling: pinned .deb versions get purged from the
+                        # pool and the locked URLs start returning 404. Re-resolve the
+                        # current versions from the repository index and retry, then
+                        # rewrite the lock so the workspace stays self-consistent.
+                        logger.warning(
+                            f'Locked sysroot package download failed ({download_error}). '
+                            f'Re-resolving current versions from the repository index and retrying...'
+                        )
+                        try:
+                            resolved = await _resolve_current_packages()
+                        except Exception as resolve_error:
+                            logger.error(
+                                f'Could not re-resolve sysroot packages from the repository index '
+                                f'({resolve_error}); failing with the original download error.'
+                            )
+                            raise download_error
+                        refresh_packages = {
+                            name: {k: v for k, v in pkg.items() if k != 'deps'}
+                            for name, pkg in resolved.items()
+                        }
+                        pkgs_info = list(refresh_packages.values())
+                        lock_refreshed = True
+                        debs = await _download_packages(tmp, pkgs_info)
                     for deb in debs:
                         _extract(staging_out, deb)
 
@@ -640,7 +694,17 @@ class Sysroot:
                 # Validate tree_hash if locked
                 actual_tree_hash = compute_tree_hash(staging_out)
                 if locked:
-                    if not expected_tree_hash or actual_tree_hash != expected_tree_hash:
+                    if lock_refreshed and refresh_packages:
+                        # The staging tree now reflects the freshly resolved versions, so
+                        # record them (and the new hash) instead of failing the mismatch check.
+                        _write_sysroot_lock_entry(
+                            self.lock_file, arch, arch_name, refresh_packages, actual_tree_hash
+                        )
+                        logger.warning(
+                            f'Refreshed {self.lock_file.name} with the current repository versions '
+                            f'(tree_hash: {actual_tree_hash}). Commit it to keep builds reproducible.'
+                        )
+                    elif not expected_tree_hash or actual_tree_hash != expected_tree_hash:
                         raise RuntimeError(
                             f'Sysroot tree_hash mismatch: expected {expected_tree_hash}, got {actual_tree_hash}'
                         )
@@ -676,8 +740,8 @@ class Sysroot:
 
         asyncio.run(_do_build())
 
-    def __call__(self, arch: str = 'arm64', locked: bool = True):
-        self.build(arch=arch, locked=locked)
+    def __call__(self, arch: str = 'arm64', locked: bool = True, refresh_lock: bool = True):
+        self.build(arch=arch, locked=locked, refresh_lock=refresh_lock)
 
     def __str__(self):
         return str(self.path)

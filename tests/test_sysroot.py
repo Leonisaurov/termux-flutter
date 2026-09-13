@@ -731,3 +731,107 @@ def test_normalize_pthread_shim_replaces_colliding_real_directories_before_symli
     assert os.readlink(termux_usr / "lib64") == "lib"
 
 
+def _prepare_rotated_lock(tmp_path, pinned_version="1.0"):
+    """Lock fixture pinning a version that the rolling Termux repo purged."""
+    sysroot_dir = tmp_path / "sysroot"
+    lock_file = tmp_path / "sysroot.lock.json"
+    lock_file.write_text(json.dumps({
+        "arm64": {
+            "arch": "arm64",
+            "tree_hash": "0" * 64,
+            "packages": {
+                "dummy": {
+                    "name": "dummy",
+                    "version": pinned_version,
+                    "url": f"http://x/dummy_{pinned_version}.deb",
+                    "sha256": "0" * 64,
+                }
+            },
+        }
+    }), encoding="utf-8")
+
+    sysroot_obj = Sysroot(path=str(sysroot_dir))
+    sysroot_obj.lock_file = lock_file
+    sysroot_obj.data = {"main": {"repo": "http://x", "dist": "d", "pkgs": ["dummy"]}}
+    return sysroot_obj, sysroot_dir, lock_file
+
+
+def _resolved_current(version="2.0"):
+    return {
+        "dummy": {
+            "name": "dummy",
+            "version": version,
+            "url": f"http://x/dummy_{version}.deb",
+            "sha256": "1" * 64,
+            "size": 10,
+            "archive_path": f"dummy_{version}.deb",
+            "repo": "http://x",
+            "dist": "d",
+            "deps": [],
+        }
+    }
+
+
+def _mock_extract_usr_lib(out_dir, deb):
+    target_dir = out_dir / "data" / "data" / "com.termux" / "files" / "usr" / "lib"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "libpthread.a").write_bytes(b"INPUT(-lc)")
+
+
+def test_sysroot_build_locked_recovers_from_rotated_packages(tmp_path):
+    """A pinned .deb that upstream purged must not kill the build.
+
+    Termux repos are rolling: versions disappear from the pool, so a committed
+    sysroot.lock.json eventually points at 404 URLs. build(locked=True) must
+    re-resolve the current version from the repository index, retry, and persist
+    the refreshed lock instead of failing the whole release build.
+    """
+    sysroot_obj, sysroot_dir, lock_file = _prepare_rotated_lock(tmp_path)
+    attempts = []
+
+    async def mock_download(out, pkgs_info):
+        attempts.append([(p["name"], p["version"]) for p in pkgs_info])
+        if len(attempts) == 1:
+            raise RuntimeError("✗ 下載或驗證失敗 dummy_1.0.deb: 404, message='Not Found'")
+        return [pathlib.Path("dummy_2.0.deb")]
+
+    async def mock_resolve(sess, arch, sysroot_data):
+        return _resolved_current("2.0")
+
+    with patch("sysroot._is_file_uncommitted", return_value=False), \
+         patch("sysroot._resolve_packages", side_effect=mock_resolve), \
+         patch("sysroot._download_packages", side_effect=mock_download), \
+         patch("sysroot._extract", side_effect=_mock_extract_usr_lib):
+        sysroot_obj.build(arch="arm64", locked=True)
+
+    # First attempt used the pinned (dead) version, the retry used the current one.
+    assert attempts == [[("dummy", "1.0")], [("dummy", "2.0")]]
+    assert sysroot_dir.is_dir()
+
+    # The lock is rewritten so the next run is self-consistent.
+    refreshed = json.loads(lock_file.read_text(encoding="utf-8"))["arm64"]
+    assert refreshed["packages"]["dummy"]["version"] == "2.0"
+    assert refreshed["packages"]["dummy"]["url"] == "http://x/dummy_2.0.deb"
+    assert refreshed["tree_hash"] == compute_tree_hash(sysroot_dir)
+    assert refreshed["tree_hash"] != "0" * 64
+    assert "deps" not in refreshed["packages"]["dummy"]
+
+
+def test_sysroot_build_locked_rotated_packages_fail_closed_without_refresh(tmp_path):
+    """With refresh disabled, a purged pinned package must still fail loudly."""
+    sysroot_obj, _sysroot_dir, lock_file = _prepare_rotated_lock(tmp_path)
+    before = lock_file.read_text(encoding="utf-8")
+
+    async def mock_download(out, pkgs_info):
+        raise RuntimeError("✗ 下載或驗證失敗 dummy_1.0.deb: 404, message='Not Found'")
+
+    with patch("sysroot._is_file_uncommitted", return_value=False), \
+         patch("sysroot._download_packages", side_effect=mock_download), \
+         patch("sysroot._extract", side_effect=_mock_extract_usr_lib):
+        with pytest.raises(RuntimeError, match="404"):
+            sysroot_obj.build(arch="arm64", locked=True, refresh_lock=False)
+
+    # Fail-closed: nothing was rewritten.
+    assert lock_file.read_text(encoding="utf-8") == before
+
+
