@@ -12,6 +12,18 @@ import utils
 from build import Build, windows_to_wsl_path, wsl_to_windows_path, validate_wsl_mount
 
 
+def _write_android_gen_snapshot(root, mode='release'):
+    """Emulate build_android_gen_snapshot()'s normalized output contract.
+
+    The real step normalizes the ninja output into
+    <root>/engine/src/out/android_<mode>_arm64/clang_arm64/gen_snapshot, and
+    build_all() asserts that artifact exists right after the step runs.
+    """
+    out = Path(root) / 'engine' / 'src' / 'out' / f'android_{mode}_arm64' / 'clang_arm64'
+    out.mkdir(parents=True, exist_ok=True)
+    (out / 'gen_snapshot').write_text('dummy')
+
+
 def test_utils_mode_ordering():
     assert utils.__MODE__ == ('debug', 'release', 'profile')
     assert utils.__MODE__[0] == 'debug'
@@ -118,7 +130,10 @@ def test_build_all_deduplication_and_skipping(tmp_path, monkeypatch):
     monkeypatch.setattr(b, 'build_impellerc', lambda **kwargs: None)
     monkeypatch.setattr(b, 'build_const_finder', lambda **kwargs: None)
     monkeypatch.setattr(b, 'configure_android', lambda **kwargs: None)
-    monkeypatch.setattr(b, 'build_android_gen_snapshot', lambda **kwargs: None)
+    monkeypatch.setattr(
+        b, 'build_android_gen_snapshot',
+        lambda **kwargs: _write_android_gen_snapshot(flutter_dir, kwargs.get('mode', 'release'))
+    )
     
     executed_steps = []
     def mock_clone(**kwargs): executed_steps.append('clone')
@@ -218,7 +233,10 @@ def test_release_outputs_dartdev_aot_completeness_check(tmp_path, monkeypatch):
     monkeypatch.setattr(b, 'build_impellerc', lambda **kwargs: None)
     monkeypatch.setattr(b, 'build_const_finder', lambda **kwargs: None)
     monkeypatch.setattr(b, 'configure_android', lambda **kwargs: None)
-    monkeypatch.setattr(b, 'build_android_gen_snapshot', lambda **kwargs: None)
+    monkeypatch.setattr(
+        b, 'build_android_gen_snapshot',
+        lambda **kwargs: _write_android_gen_snapshot(flutter_dir, kwargs.get('mode', 'release'))
+    )
     monkeypatch.setattr(b, 'debuild', lambda **kwargs: None)
     monkeypatch.setattr(b, 'is_sync_complete', lambda: True)
 
@@ -444,7 +462,10 @@ def test_build_all_sole_owner_avoids_dirty_checkout_sequence(tmp_path, monkeypat
     monkeypatch.setattr(b, 'build_impellerc', mock_build)
     monkeypatch.setattr(b, 'build_const_finder', mock_build)
     monkeypatch.setattr(b, 'configure_android', mock_build)
-    monkeypatch.setattr(b, 'build_android_gen_snapshot', mock_build)
+    monkeypatch.setattr(
+        b, 'build_android_gen_snapshot',
+        lambda **kwargs: _write_android_gen_snapshot(flutter_dir, kwargs.get('mode', 'release'))
+    )
     monkeypatch.setattr(b, 'debuild', mock_debuild)
     monkeypatch.setattr(b, 'is_sync_complete', lambda: False)
 

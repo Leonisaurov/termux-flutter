@@ -489,8 +489,15 @@ class TestWorkflowSecurityAndRepoSanity:
                     f"{yml_file.name} should have read permissions, got {perms}"
                 )
 
-            elif yml_file.name in ("build-deb.yml", "device-smoke.yml"):
-                # Manual dispatch workflows that upload or promote releases
+            elif yml_file.name == "build-deb.yml":
+                # Build-only workflow: it uploads artifacts and never promotes a
+                # release, so least privilege is read-only (the release-promoting
+                # workflows are device-smoke.yml and release-check.yml).
+                assert perms.get("contents") == "read", f"{yml_file.name} should have contents: read"
+                assert perms.get("actions") == "read", f"{yml_file.name} should have actions: read"
+
+            elif yml_file.name == "device-smoke.yml":
+                # Manual dispatch workflow that promotes releases
                 assert perms.get("contents") == "write", f"{yml_file.name} should have contents: write"
                 assert perms.get("actions") == "read", f"{yml_file.name} should have actions: read"
 

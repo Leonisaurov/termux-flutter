@@ -192,6 +192,9 @@ def test_is_sync_complete_mismatched_gclient_hash(tmp_path, monkeypatch):
 def test_is_sync_complete_valid_match(tmp_path, monkeypatch):
     root = tmp_path / "flutter"
     engine_src = root / "engine" / "src"
+    # gclient materializes the Chromium build config alongside the engine tree;
+    # is_sync_complete() treats it as a required checkout root.
+    (engine_src / "build").mkdir(parents=True)
     (engine_src / "flutter").mkdir(parents=True)
     (engine_src / "flutter" / "third_party" / "dart" / "tools" / "sdks" / "dart-sdk").mkdir(parents=True)
     skia_header = engine_src / "flutter" / "third_party" / "skia" / "include" / "private" / "SkFeatures.h"

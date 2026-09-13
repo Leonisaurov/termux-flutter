@@ -188,10 +188,22 @@ def test_adv_step_skipping_build_all(tmp_path, monkeypatch):
 
     steps_called = []
     for step_name in ('clone', 'sync', 'configure', 'build', 'build_dart', 'build_impellerc',
-                       'build_const_finder', 'configure_android', 'build_android_gen_snapshot'):
+                       'build_const_finder', 'configure_android'):
         def make_mock(name):
             return lambda **kwargs: steps_called.append(name)
         monkeypatch.setattr(b, step_name, make_mock(step_name))
+
+    def mock_build_android_gen_snapshot(**kwargs):
+        # Mirror the real builder: build_android_gen_snapshot() normalizes the
+        # ninja output into <out>/android_<mode>_arm64/clang_arm64/gen_snapshot,
+        # and build_all() asserts that artifact exists after the step runs.
+        steps_called.append('build_android_gen_snapshot')
+        mode = kwargs.get('mode', 'release')
+        out = flutter_dir / 'engine' / 'src' / 'out' / f'android_{mode}_arm64' / 'clang_arm64'
+        out.mkdir(parents=True, exist_ok=True)
+        (out / 'gen_snapshot').write_text('dummy')
+
+    monkeypatch.setattr(b, 'build_android_gen_snapshot', mock_build_android_gen_snapshot)
 
     def mock_sysroot(**kwargs): steps_called.append('sysroot')
     monkeypatch.setattr(b, 'sysroot', mock_sysroot)

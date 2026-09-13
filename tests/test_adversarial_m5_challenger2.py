@@ -91,16 +91,10 @@ conf = "package.yaml"
 
     monkeypatch.chdir(fake_repo)
 
-    builder = Build()
-    builder.conf = {
-        "flutter": {
-            "tag": "3.44.9",
-            "path": "flutter",
-            "engine_commit": "deadbeef",
-            "dart_version": "3.4.0",
-        },
-        "package": {"conf": "package.yaml"},
-    }
+    # Build() resolves its config relative to the repo root, so point it at the
+    # fixture config explicitly: the repo's own build.toml tag moves on every
+    # Flutter upgrade and must not leak into this scenario.
+    builder = Build(conf=str(fake_repo / "build.toml"))
 
     monkeypatch.setattr(utils, "flutter_tag", lambda p: "3.44.9")
     monkeypatch.setattr(builder, "classify_workspace_patch_state", lambda p: {"valid": True, "state": "clean"})
