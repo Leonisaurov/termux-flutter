@@ -137,6 +137,19 @@ def run_post_install(flutter_root, android_sdk, prefix, args=None):
     return res
 
 
+def expected_compile_key(flutter_root):
+    """The key shared.sh compares the stamp against.
+
+    shared.sh (upgrade_flutter): compilekey="$revision:$FLUTTER_TOOL_ARGS" where
+    revision is the checkout revision, i.e. `git -C $FLUTTER_ROOT rev-parse HEAD`.
+    """
+    revision = subprocess.run(
+        ["git", "-C", str(flutter_root), "rev-parse", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    return f"{revision}:{os.environ.get('FLUTTER_TOOL_ARGS', '')}"
+
+
 def test_correct_revision_stamp_format(tmp_path):
     flutter_root, android_sdk, prefix, files = create_mock_env(tmp_path)
     res = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
@@ -149,9 +162,35 @@ def test_correct_revision_stamp_format(tmp_path):
     assert snapshot.exists(), "flutter_tools.snapshot must exist"
     assert snapshot.stat().st_size > 0, "flutter_tools.snapshot must not be empty"
 
-    engine_ver = (flutter_root / "bin" / "internal" / "engine.version").read_text().strip()
-    expected_stamp = f"{engine_ver}:"
+    expected_stamp = expected_compile_key(flutter_root)
     assert stamp.read_text() == expected_stamp, f"Stamp must equal '{expected_stamp}', got '{stamp.read_text()}'"
+
+
+def test_stamp_matches_shared_sh_compile_key(tmp_path):
+    """The stamp must use the key the launcher actually compares against.
+
+    ``shared.sh`` (upgrade_flutter) computes
+    ``compilekey="$revision:$FLUTTER_TOOL_ARGS"`` with
+    ``revision="$(git -C "$FLUTTER_ROOT" rev-parse HEAD)"`` — the *checkout* revision,
+    not the engine version. Writing the engine version made the first ``flutter`` run
+    after install consider the freshly built snapshot stale and rebuild the tool.
+    """
+    flutter_root, android_sdk, prefix, files = create_mock_env(tmp_path)
+    res = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
+    assert res.returncode == 0, f"post_install failed: stdout={res.stdout} stderr={res.stderr}"
+
+    revision = subprocess.run(
+        ["git", "-C", str(flutter_root), "rev-parse", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    assert revision, "post_install must leave a resolvable checkout revision (synthetic repo)"
+
+    compile_key = f"{revision}:{os.environ.get('FLUTTER_TOOL_ARGS', '')}"
+    stamp = flutter_root / "bin" / "cache" / "flutter_tools.stamp"
+    assert stamp.read_text() == compile_key, (
+        f"stamp {stamp.read_text()!r} must equal shared.sh's compilekey {compile_key!r} "
+        "(otherwise the launcher rebuilds the tool on first run)"
+    )
 
 
 def test_missing_compiler_fails_closed(tmp_path):
@@ -195,8 +234,7 @@ def test_stale_or_malformed_stamp_overwritten_correctly(tmp_path):
     res = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
     assert res.returncode == 0
 
-    engine_ver = (flutter_root / "bin" / "internal" / "engine.version").read_text().strip()
-    expected_stamp = f"{engine_ver}:"
+    expected_stamp = expected_compile_key(flutter_root)
     assert stamp.read_text() == expected_stamp, f"Stale stamp must be overwritten with '{expected_stamp}'"
 
 
@@ -233,8 +271,8 @@ def test_hermetic_shared_sh_cache_decision(tmp_path):
     # else
     #   echo "VALID"
     # fi
-    engine_ver = (flutter_root / "bin" / "internal" / "engine.version").read_text().strip()
-    compile_key = f"{engine_ver}:"
+    # The key is the checkout revision (shared.sh line 124-125), NOT the engine version.
+    compile_key = expected_compile_key(flutter_root)
 
     # Hermetically verify all 4 shared.sh cache validity conditions (shared.sh lines 133-136):
     # 1. snapshot exists

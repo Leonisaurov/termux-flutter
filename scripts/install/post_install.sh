@@ -1264,7 +1264,23 @@ finalize_flutter_tools_cache() {
         return 1
     fi
 
-    local COMPILE_KEY="${REVISION}:"
+    # The stamp must carry the exact key flutter's launcher compares against, or the
+    # launcher throws away the snapshot built here and recompiles on the first
+    # `flutter` run. bin/internal/shared.sh (upgrade_flutter) computes:
+    #   compilekey="$revision:$FLUTTER_TOOL_ARGS" with
+    #   revision="$(git -C "$FLUTTER_ROOT" rev-parse HEAD)"
+    local TOOL_ARGS="${FLUTTER_TOOL_ARGS:-}"
+    local GIT_BIN=""
+    if [ -x "$PREFIX/bin/git" ]; then
+        GIT_BIN="$PREFIX/bin/git"
+    elif command -v git >/dev/null 2>&1; then
+        GIT_BIN="$(command -v git)"
+    fi
+    local CHECKOUT_REV=""
+    if [ -n "$GIT_BIN" ] && [ -d "$FLUTTER_ROOT/.git" ]; then
+        CHECKOUT_REV=$("$GIT_BIN" -C "$FLUTTER_ROOT" rev-parse HEAD 2>/dev/null || true)
+    fi
+    local COMPILE_KEY="${CHECKOUT_REV:-$REVISION}:$TOOL_ARGS"
 
     # Ensure pubspec.lock exists and is strictly newer than pubspec.yaml
     if [ -f "$PUBSPEC_YAML" ]; then
