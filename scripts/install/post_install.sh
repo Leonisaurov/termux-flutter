@@ -4,11 +4,6 @@
 
 set -e
 
-: "${TMPDIR:=/data/data/com.termux/files/usr/tmp}"
-export TMPDIR
-mkdir -p "$TMPDIR"
-test -d "$TMPDIR" && test -w "$TMPDIR"
-
 echo "=========================================="
 echo "Flutter Termux Post-Install Configuration"
 echo "=========================================="
@@ -21,6 +16,14 @@ DART_SDK="${DART_SDK:-$FLUTTER_ROOT/bin/cache/dart-sdk}"
 if [ -z "${FLUTTER_PREBUILT_ENGINE_VERSION:-}" ] && [ -f "$FLUTTER_ROOT/bin/internal/engine.version" ]; then
     export FLUTTER_PREBUILT_ENGINE_VERSION="$(cat "$FLUTTER_ROOT/bin/internal/engine.version" 2>/dev/null | tr -d '\n\r')"
 fi
+
+# TMPDIR must be derived from PREFIX so any prefix stays self-contained.
+# Hardcoding the Termux prefix here made runs with an overridden PREFIX (CI
+# runners, custom prefixes) try to create /data and fail closed.
+: "${TMPDIR:=$PREFIX/tmp}"
+export TMPDIR
+mkdir -p "$TMPDIR"
+test -d "$TMPDIR" && test -w "$TMPDIR"
 
 export PATH="$PREFIX/bin:$PATH"
 PATCH_STATE_FILE="${PATCH_STATE_FILE:-$PREFIX/share/flutter/patch_state.json}"
@@ -1320,7 +1323,7 @@ ensure_profile_env() {
         cat > "$profile_file" << 'EOF'
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 export PATH=${PREFIX}/opt/flutter/bin:${PATH}
-: "${TMPDIR:=/data/data/com.termux/files/usr/tmp}"
+: "${TMPDIR:=$PREFIX/tmp}"
 export TMPDIR
 mkdir -p "$TMPDIR"
 if [ -z "${ANDROID_NDK_HOME:-}" ]; then

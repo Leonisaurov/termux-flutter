@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 import pytest
@@ -124,6 +125,40 @@ def run_post_install(flutter_root, android_sdk, prefix, args=None):
     )
     res = subprocess.run(["bash", "-c", cmd], cwd=str(REPO_ROOT), capture_output=True, text=True)
     return res
+
+
+def test_post_install_tmpdir_defaults_under_prefix(tmp_path):
+    """TMPDIR must default to $PREFIX/tmp, never to the hardcoded Termux prefix.
+
+    Regression: post_install.sh hardcoded /data/data/com.termux/files/usr/tmp as
+    the TMPDIR default and ran `mkdir -p "$TMPDIR"` before honoring PREFIX. Any
+    run with an overridden PREFIX (CI runners, custom prefixes) therefore tried
+    to create /data and failed closed with
+    "mkdir: cannot create directory '/data': Permission denied".
+    """
+    flutter_root, android_sdk, prefix, _files = create_mock_env(tmp_path)
+    # Remove the pre-created tmp dir so the script has to create its own TMPDIR.
+    shutil.rmtree(prefix / "tmp")
+
+    post_install_path = to_bash_path(POST_INSTALL)
+    flut_path = to_bash_path(flutter_root)
+    sdk_path = to_bash_path(android_sdk)
+    pref_path = to_bash_path(prefix)
+
+    cmd = (
+        "unset TMPDIR && "
+        f"export FLUTTER_ROOT='{flut_path}' && "
+        f"export ANDROID_SDK='{sdk_path}' && "
+        f"export PREFIX='{pref_path}' && "
+        f"bash '{post_install_path}' --status"
+    )
+    res = subprocess.run(["bash", "-c", cmd], cwd=str(REPO_ROOT), capture_output=True, text=True)
+    assert res.returncode == 0, (
+        f"--status failed with TMPDIR unset: stdout={res.stdout} stderr={res.stderr}"
+    )
+    assert (prefix / "tmp").is_dir(), (
+        "TMPDIR was not derived from $PREFIX (expected $PREFIX/tmp to be created)"
+    )
 
 
 def test_post_install_syntax():
