@@ -187,6 +187,43 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def package_config_uris_outside_tree(package_config_path, tree_root) -> list:
+    """Return the ``file://`` URIs of a package_config.json that fall outside the tree.
+
+    post_install.sh rewrites ``file://<anything>/flutter/`` URIs to the device
+    FLUTTER_ROOT, so a resolved package that lives outside the packaged flutter tree
+    would keep pointing at the build machine and break `flutter` on the device.
+    Anything reported here means the generated cache must not be shipped.
+    """
+    import urllib.parse
+
+    path = Path(package_config_path)
+    if not path.is_file():
+        return [f'{path}: missing package_config.json']
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except Exception as e:
+        return [f'{path}: unparseable package_config.json ({e})']
+
+    root = Path(tree_root).resolve()
+    outside = []
+    for pkg in data.get('packages') or []:
+        if not isinstance(pkg, dict):
+            continue
+        for key in ('rootUri', 'packageUri'):
+            uri = pkg.get(key)
+            if not isinstance(uri, str) or not uri.startswith('file://'):
+                continue
+            target = Path(urllib.parse.unquote(uri[len('file://'):]))
+            if not target.is_absolute():
+                target = (path.parent / target)
+            try:
+                target.resolve().relative_to(root)
+            except ValueError:
+                outside.append(uri)
+    return outside
+
+
 class GitProgress(git.RemoteProgress):
     def update(self, op_code, cur_count, max_count=None, message=''):
         logger.trace(f"cloning {cur_count}/{max_count} {message}")
@@ -884,6 +921,70 @@ class Build:
         except Exception:
             return False
 
+    def _host_dart_bin(self):
+        """Path to the build-machine (host) Dart SDK binary, if the tree has one.
+
+        ``sync()`` downloads the official linux-x64 Dart SDK into the engine's
+        third_party/dart/tools/sdks/dart-sdk; that is the binary able to run pub get here.
+        """
+        engine_src = Path(self.root) / 'engine' / 'src'
+        engine_checkout = engine_src / 'flutter'
+        if not engine_checkout.exists():
+            engine_checkout = engine_src
+        candidate = engine_checkout / 'third_party' / 'dart' / 'tools' / 'sdks' / 'dart-sdk' / 'bin' / 'dart'
+        return candidate if candidate.exists() else None
+
+    def prepare_flutter_tools_packages(self) -> bool:
+        """Pre-resolve packages/flutter_tools inside the tree so installs need no pub get.
+
+        The deb used to ship no ``.dart_tool/package_config.json`` nor a pub cache, so
+        post_install.sh had to run ``dart pub get`` (network) on the device before it could
+        compile the tool snapshot. Resolving it here with the host Dart SDK and a PUB_CACHE
+        kept *inside* the flutter tree means every ``file://`` URI stays under $distro and
+        post_install.sh's rewrite (``file://<...>/flutter/`` -> ``$FLUTTER_ROOT/``) makes it
+        valid on the device. Falls back to the old behaviour whenever that invariant cannot
+        be met, so the pipeline never breaks over this optimisation.
+        """
+        tree = Path(self.root)
+        tools_dir = tree / 'packages' / 'flutter_tools'
+        config = tools_dir / '.dart_tool' / 'package_config.json'
+        pub_cache = tree / '.pub-cache'
+
+        if not (tools_dir / 'pubspec.yaml').is_file():
+            logger.warning(f'{tools_dir}/pubspec.yaml not found; skipping flutter_tools package pre-resolution.')
+            return False
+
+        if config.is_file() and not package_config_uris_outside_tree(config, tree):
+            logger.info('flutter_tools packages already resolved inside the tree, skipping pub get.')
+            return True
+
+        dart_bin = self._host_dart_bin()
+        if dart_bin is None:
+            logger.warning('Host Dart SDK not found; the deb will rely on the install-time pub get.')
+            return False
+
+        env = dict(os.environ, PUB_CACHE=str(pub_cache))
+        logger.info(f'Pre-resolving flutter_tools packages (PUB_CACHE={pub_cache})...')
+        try:
+            subprocess.run([str(dart_bin), 'pub', 'get'], cwd=str(tools_dir), env=env, check=True)
+        except Exception as e:
+            logger.warning(f'pub get for flutter_tools failed ({e}); the deb will rely on the install-time pub get.')
+            return False
+
+        outside = package_config_uris_outside_tree(config, tree)
+        if outside:
+            logger.warning(
+                f'Discarding the pre-resolved flutter_tools cache: {len(outside)} package URI(s) '
+                f'live outside the packaged tree (e.g. {outside[0]}). The install will run pub get instead.'
+            )
+            shutil.rmtree(tools_dir / '.dart_tool', ignore_errors=True)
+            if pub_cache.exists():
+                shutil.rmtree(pub_cache, ignore_errors=True)
+            return False
+
+        logger.success('Pre-resolved flutter_tools packages inside the tree (install-time pub get avoided).')
+        return True
+
     def sync(self, *, cfg: str = None, root: str = None):
         cfg = cfg or self.gclient
         src = root or self.root
@@ -1086,9 +1187,13 @@ class Build:
         # 3. Apply the patch
         repo.git.apply([file])
 
-    def sysroot(self, arch: str = 'arm64', locked: bool = True):
-        """Assemble Termux sysroot and apply fixes."""
-        self._sysroot(arch=arch, locked=locked)
+    def sysroot(self, arch: str = 'arm64', locked: bool = True, refresh_lock: bool = True):
+        """Assemble Termux sysroot and apply fixes.
+
+        ``refresh_lock=False`` keeps strict lock semantics (fail if a pinned package
+        is gone upstream); the default self-heals by re-resolving from the repo index.
+        """
+        self._sysroot(arch=arch, locked=locked, refresh_lock=refresh_lock)
         from sysroot import _apply_sysroot_transformations
         _apply_sysroot_transformations(self._sysroot.path)
 
@@ -1653,6 +1758,15 @@ class Build:
                 raise RuntimeError(f'Android profile gen_snapshot was not produced at {android_prof_gen}')
             self.save_stage_receipt(android_prof_dir, [android_prof_gen])
             logger.info(f'✓ android gen_snapshot profile completed in {time.time() - t0:.1f}s')
+
+        # Step 13: pre-resolve flutter_tools packages so the device install needs no pub get
+        logger.info('[13.5/14] Pre-resolving flutter_tools packages (install-time pub get)...')
+        t0 = time.time()
+        try:
+            self.prepare_flutter_tools_packages()
+        except Exception as e:
+            logger.warning(f'Pre-resolving flutter_tools packages failed ({e}); continuing without it.')
+        logger.info(f'✓ flutter_tools package pre-resolution finished in {time.time() - t0:.1f}s')
 
         # Step 13 & 14: debuild
         deb_file = Path(self.output(arch))
