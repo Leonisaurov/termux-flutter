@@ -11,8 +11,9 @@ The goal is to keep pull requests cheap and safe while still making release buil
 
 This is a public open-source repository, so standard GitHub-hosted runner
 minutes are free for the lightweight `CI` and `Release check` workflows. The
-self-hosted build/device workflows also do not consume GitHub-hosted runner
-minutes.
+manual `Build deb` and `Device smoke` workflows now also run on GitHub-hosted
+runners, so a release build spends roughly a five-hour slice of those free
+minutes — trigger it deliberately, not on every push.
 
 That does **not** mean Actions are unlimited:
 
@@ -35,9 +36,9 @@ References:
 
 | Workflow | File | Runner | Trigger | Purpose |
 |----------|------|--------|---------|---------|
-| CI | `.github/workflows/ci.yml` | `ubuntu-latest` | PR, push to `master`, manual | Python/shell/PowerShell syntax, package/docs/workflow sanity, whitespace checks |
-| Build deb | `.github/workflows/build-deb.yml` | self-hosted Linux/WSL | manual | Full `build.py` pipeline, `.deb` packaging, optional release publishing |
-| Device smoke | `.github/workflows/device-smoke.yml` | self-hosted Windows + ADB tablet | manual | Install deb in Termux, run `post_install.sh`, `flutter doctor`, create/build APK/Linux smoke |
+| CI | `.github/workflows/ci.yml` | `ubuntu-latest` | PR, push to `master`, manual | `pytest tests/`, Python/shell/PowerShell syntax, shellcheck + actionlint, package/docs/workflow sanity, version drift, whitespace checks |
+| Build deb | `.github/workflows/build-deb.yml` | `ubuntu-latest` (choice: `ubuntu-latest`, `ubuntu-latest-4-cores`, `ubuntu-latest-8-cores`) | manual | Full `build.py build_all` pipeline (~5 h), `.deb` packaging, artifact upload |
+| Device smoke | `.github/workflows/device-smoke.yml` | `ubuntu-latest` | manual | Install deb in Termux/device flow, run `post_install.sh`, `flutter doctor`, APK/Linux smoke |
 | Release check | `.github/workflows/release-check.yml` | `ubuntu-latest` | release publish/edit, manual | Verify release asset name, size, and SHA256 digest |
 
 ## Why the split exists
@@ -45,14 +46,15 @@ References:
 Public repositories can use standard GitHub-hosted runners for free, but this project's full build is not a normal CI job:
 
 - `gclient sync` downloads tens of GB.
-- Flutter Engine builds can take hours.
-- The build needs Android NDK r27d at `/opt/android-ndk-r27d`.
-- Real release confidence requires an attached Android/Termux tablet.
+- Flutter Engine builds take hours (~5 h even with warm caches).
+- Real release confidence requires installing the `.deb` in a real Termux.
+- The engine build needs an Android NDK (r27d) plus the Termux sysroot assembled
+  from apt packages.
 
 Therefore:
 
-- **PR CI must stay lightweight** and never touch self-hosted device hardware.
-- **Full build and device smoke are manual self-hosted gates** run by a maintainer.
+- **PR CI must stay lightweight** (~2-3 min) and never build the engine.
+- **Full build and device verification are manual gates** triggered by a maintainer.
 - **Release publishing is manual**, not automatic on every merge to `master`.
 
 ## PR / push CI
@@ -60,12 +62,19 @@ Therefore:
 `ci.yml` runs on every PR and push to `master`:
 
 ```text
+pytest tests/
 python -m py_compile build.py package.py sysroot.py utils.py scripts/ci/check_repo.py
 bash -n install_flutter_complete.sh scripts/install/*.sh scripts/test/gh_e2e_test.sh scripts/device/termux_smoke.sh
+ShellCheck --severity=error on the shell entrypoints, actionlint on .github/workflows/*.yml
 PowerShell parser check for scripts/device/run_termux_smoke.ps1
+build.toml schema check
 python scripts/ci/check_repo.py
+python scripts/ci/check_version_drift.py
 git diff --check
 ```
+
+`pytest tests/` is the only behavioural gate — the shell/lint steps above it cannot
+catch a broken pipeline, so never leave it red.
 
 `check_repo.py` validates repo-specific contracts, including:
 
@@ -78,46 +87,48 @@ git diff --check
 
 ## Full deb build
 
-Manual workflow: **Build deb (self-hosted)**
+Manual workflow: **Build deb** (`.github/workflows/build-deb.yml`, `ubuntu-latest` by default)
 
-Default inputs:
+Inputs:
 
 ```text
-flutter_version: 3.47.2
+flutter_version: (optional) must match the build.toml tag or the job fails early
 arch: arm64
-runner_labels_json: ["self-hosted","linux"]
-publish_release: false
-release_tag: v3.47.2
+force: false            # force a full rebuild, ignoring cached engine artifacts
+runner: ubuntu-latest   # or ubuntu-latest-4-cores / ubuntu-latest-8-cores
 ```
 
-Required self-hosted environment:
+Steps: checkout → free disk space → Python 3.12 + `requirements.txt` → system dependencies →
+cache `depot_tools`, engine source, sysroot and build artifacts → `python build.py build_all --arch=<arch>`
+(~5 h; 4h57m measured for a cached 3.47.2 run) → collect metadata → upload artifact.
 
-- Linux or WSL runner with enough disk space (100GB+ recommended)
-- Python 3.12 available through `actions/setup-python`
-- `/opt/android-ndk-r27d`
-- `git`, `curl`, `ninja`, `pkg-config`, and normal build dependencies
-- network access for Flutter/Chromium/Termux downloads
+The artifact is `flutter-termux-<tag>-<arch>` and contains:
 
-The workflow bootstraps `depot_tools` if `gclient` is missing, then runs:
+- `flutter_<tag>_aarch64.deb`
+- `flutter_<tag>_aarch64.deb.sha256` and `flutter_<tag>_aarch64.deb.size.txt`
+- `build_metadata.json` (version, arch, run id, source commit, tree sha, sha256, size, duration)
+- `build_evidence.json` (same, plus `inventory_file_count`)
+- `inventory.txt` (`dpkg-deb -c` listing of everything packaged)
 
-```bash
-python3 build.py clone
-python3 build.py sync
-python3 build.py patch_engine
-python3 build.py patch_dart
-python3 build.py patch_skia
-python3 build.py patch_flutter_sdk
-python3 build.py build_all --arch=arm64
-python3 build.py debuild --arch=arm64
-```
+On failure it also uploads `flutter-termux-<tag>-<arch>-build-log` with the raw `build.log`.
 
-It uploads:
+Two mechanisms inside `build_all()` keep this pipeline alive; both were added after real failures:
 
-- `flutter_3.47.2_aarch64.deb`
-- `flutter_3.47.2_aarch64.deb.sha256`
-- `flutter_3.47.2_aarch64.deb.size.txt`
+1. **Sysroot self-healing.** `sysroot.lock.json` pins exact Termux `.deb` URLs + sha256, but the
+   Termux pool is rolling and purges old versions, so pinned downloads start returning 404
+   (observed: `mesa_26.0.6-2_aarch64.deb`). `Sysroot.build()` then re-resolves the current versions
+   from the repository index, retries the download, and rewrites the lock with a fresh `tree_hash`
+   instead of killing the release build. `refresh_lock=False` restores strict lock semantics, and a
+   deliberate committed-lock refresh is `python3 build.py sysroot_lock --arch=arm64`.
+2. **flutter_tools package pre-resolution.** `prepare_flutter_tools_packages()` runs `dart pub get`
+   with the host (linux-x64) Dart SDK that `sync()` installs, using `PUB_CACHE=<flutter_root>/.pub-cache`
+   so every `file://` URI stays inside the packaged tree — exactly what `post_install.sh`'s path
+   rewrite expects. If any URI escapes the tree the generated cache is discarded and installs fall
+   back to on-device `pub get`.
 
-If `publish_release=true`, it creates or updates `release_tag` and uploads the deb with `--clobber`.
+Cache notes: every `actions/cache` key includes `${{ github.sha }}`, so a new commit misses the
+exact key and restores the previous cache through `restore-keys`. A stale sysroot cache is therefore
+normal, and it is what triggers the verify/rebuild path (and the 404 that the self-heal above absorbs).
 
 ## Release policy
 
@@ -125,10 +136,14 @@ Merging to `master` does **not** publish a GitHub Release. The current release
 flow is intentionally maintainer-triggered:
 
 1. Merge only after PR CI passes.
-2. Trigger **Build deb (self-hosted)** manually on the chosen commit/tag.
-3. Leave `publish_release=false` for a dry build, or set
-   `publish_release=true` only when intentionally publishing.
-4. Run device smoke against the produced or published `.deb`.
+2. Trigger **Build deb** manually on the chosen commit and wait for artifact
+   `flutter-termux-<tag>-<arch>`.
+3. Verify the artifact first: sha256 against `.sha256` / `build_metadata.json`,
+   then the extract-and-run smoke test documented in `AGENTS.md`.
+4. Run **Device smoke** with the build's `artifact_run_id`, `artifact_name` and
+   `expected_sha256`: it re-verifies the digest, inspects the `.deb`, does a
+   dry-run installability check, and — only with `promote_release=true` plus a
+   `release_tag` — creates/updates the GitHub Release for that tag.
 5. Let **Release check** verify the release asset metadata after publish/edit.
 
 This avoids accidental multi-hour engine builds and prevents unreviewed merges
@@ -138,40 +153,27 @@ explicit maintainer action.
 
 ## Device smoke
 
-Manual workflow: **Device smoke (self-hosted)**
+Manual workflow: **Device smoke** (`.github/workflows/device-smoke.yml`,
+`ubuntu-latest`, 30-minute timeout)
 
-Default input tests the published v3.47.2-termux release asset:
-
-```text
-deb_url: https://github.com/ImL1s/termux-flutter-wsl/releases/download/v3.47.2-termux/flutter_3.47.2_aarch64.deb
-expected_sha256: 66a7099324c0d7094d604aa92abeec87b7a29b8e0bc697b819e0cd91fc706000
-```
-
-Required self-hosted environment:
-
-- Windows runner with ADB installed
-- Android tablet connected and authorized for USB debugging
-- Termux installed and launchable as `com.termux`
-- Tablet awake/unlocked before the run; secure lock screens block ADB text injection into Termux
-- Enough tablet storage for the deb, Android SDK/NDK, Gradle caches, APK, and Linux build
-
-The PowerShell driver intentionally keeps the tablet awake:
-
-```powershell
-adb shell svc power stayon true
-adb shell input keyevent 224
-adb shell wm dismiss-keyguard
-```
-
-It then pushes the deb and `scripts/device/termux_smoke.sh`, launches Termux, injects:
+Inputs:
 
 ```text
-sh /sdcard/Download/termux_ci_smoke.sh
+artifact_run_id: run id of the Build deb run that produced the deb
+artifact_name:   e.g. flutter-termux-3.47.2-arm64
+expected_sha256: must match the downloaded .deb
+promote_release: false            # true publishes a GitHub Release
+release_tag:     v3.47.2-termux   # required when promote_release=true
+timeout_minutes: 30
 ```
 
-and polls `/sdcard/Download/termux_ci_smoke.txt` until `DONE` or timeout.
+The job downloads the artifact, verifies the SHA256, inspects the `.deb`
+contents, performs a dry-run installability check, generates smoke evidence and
+only then optionally promotes the release.
 
-Required success markers:
+An actual on-device Termux run is still a manual step (the historical
+self-hosted Windows + ADB + `scripts/device/termux_smoke.sh` flow, kept in the
+repo for that purpose). Its required markers are:
 
 ```text
 INSTALL_STATUS=0
@@ -189,8 +191,6 @@ BUILD_LINUX_STATUS=0
 DONE
 ```
 
-The workflow turns `svc power stayon` back off before exiting.
-
 ## Release check
 
 `release-check.yml` verifies release metadata from GitHub:
@@ -205,9 +205,11 @@ This workflow is safe to run on GitHub-hosted runners because it only reads publ
 ## Security model
 
 - Fork PRs only get `ci.yml` on GitHub-hosted runners.
-- Self-hosted build/device workflows are `workflow_dispatch` only.
-- Device smoke does not run untrusted PR code automatically.
-- Release publishing requires `contents: write` and only happens from the manual self-hosted build workflow when `publish_release=true`.
+- `Build deb` and `Device smoke` are `workflow_dispatch` only, so no untrusted PR can start a
+  five-hour build or touch a release.
+- `Device smoke` never runs PR code; it only verifies a maintainer-selected artifact.
+- Release publishing requires `contents: write` and happens only from the manual `Device smoke`
+  run with `promote_release=true` plus an explicit `release_tag`.
 
 ## Branch Protection and Repository Governance
 
@@ -223,6 +225,7 @@ The repository governance rules for the `master` branch are codified in `.github
 Fast local checks:
 
 ```bash
+pytest tests/
 python -m py_compile build.py package.py sysroot.py utils.py scripts/ci/check_repo.py scripts/ci/check_version_drift.py
 bash -n install_flutter_complete.sh scripts/install/*.sh scripts/test/gh_e2e_test.sh scripts/device/termux_smoke.sh
 python scripts/ci/check_repo.py

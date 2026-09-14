@@ -17,8 +17,8 @@
 | Dart VM (`dartvm`) | post-install `dartvm` resolves to Dart 3.13.2 (`android_arm64`) |
 
 | 測試設備 | Samsung SM-X716B / Android 16 / ARM64 |
-| deb size | Pending first reproducible build |
-| SHA256 | Published with the `.deb.sha256` companion asset |
+| deb size | 約 192 MB（3.47.2 CI build：201,276,428 bytes；含 101 個 flutter_tools 套件快取） |
+| SHA256 | 隨 `.deb.sha256` companion asset 發佈，可用 `sha256sum` 比對 |
 
 ## 系統需求
 
@@ -50,8 +50,7 @@ wget https://github.com/ImL1s/termux-flutter-wsl/releases/download/v3.47.2-termu
 sha256sum flutter_3.47.2_aarch64.deb
 # Compare the output with flutter_3.47.2_aarch64.deb.sha256 from the release.
 
-dpkg -i flutter_3.47.2_aarch64.deb
-apt --fix-broken install -y
+dpkg -i --force-depends flutter_3.47.2_aarch64.deb
 
 # 必跑：dpkg 只安裝檔案；這一步才會修補 Termux runtime。
 bash $PREFIX/share/flutter/post_install.sh
@@ -59,6 +58,20 @@ bash $PREFIX/share/flutter/post_install.sh
 source $PREFIX/etc/profile.d/flutter.sh
 flutter doctor -v
 ```
+
+`--force-depends` 是必要的：若你的 Termux 是 pacman 基底（`pacman -Q git` 有、但 `dpkg -s git`
+說沒安裝），dpkg 的資料庫看不到 pacman 裝的套件，`Depends:`（git/which/openjdk-21/wget/unzip/
+binutils/clang）會被判定未滿足。先確認需求工具都在 PATH 上即可：
+
+```bash
+for t in git which wget unzip clang ninja cmake pkg-config java; do command -v $t || echo "MISSING $t"; done
+```
+
+安裝時間參考（3.47.2，實測）：`post_install.sh` 約 6 分鐘，其中約 5 分鐘是編譯
+`flutter_tools.snapshot`（deb 刻意不含它）；Android SDK（約 430 MB：platforms 34/36、
+build-tools 35、cmdline-tools、platform-tools）不在 deb 內，會在此步驟下載。
+`flutter_tools` 的套件解析（`package_config.json` + pub cache）已預先打包進 deb，
+因此**不需要**在裝置上執行 `pub get`。
 
 `flutter doctor` 中以下警告通常是預期的：
 
@@ -70,7 +83,9 @@ flutter doctor -v
 | 類別 | 內容 |
 |------|------|
 | Dart | 用 Termux JIT Dart 跑 Flutter CLI，保留 engine `dartvm` / `dartaotruntime` 給 snapshots |
-| Flutter Tools | 修補 Android/Termux host lookup，清掉舊 `flutter_tools` snapshot/cache |
+| Flutter Tools | 編譯一次 `flutter_tools.snapshot`；stamp 用 launcher（`bin/internal/shared.sh`）的 compile key（`git rev-parse HEAD` + `:` + `FLUTTER_TOOL_ARGS`），所以第一次 `flutter` 不會重編 |
+| 套件解析 | deb 已含 `packages/flutter_tools/.dart_tool/package_config.json` 與 `.pub-cache`，只把 URI 重寫成 `$FLUTTER_ROOT`，**不執行** `pub get` |
+| TMPDIR | 由 `PREFIX` 推導（`$PREFIX/tmp`）；不再硬編 `/data/data/com.termux/...`，任何 prefix（含 CI/測試）都能跑 |
 | Gradle plugin | ARM64-only ABI；補 Flutter 3.44 需要的 `PLATFORM_ABI_LIST` |
 | Android SDK | 安裝/修補 API 34/36、cmdline-tools、build-tools、licenses |
 | NDK | 建立 clang wrappers、修補 CMake host tag、替換 objcopy/strip |
@@ -97,6 +112,13 @@ flutter doctor -v
 - `flutter --version` 顯示 Flutter 3.47.2。
 - `dart --version` 顯示 `android_arm64`（Termux JIT Dart）。
 - `dartvm --version` 顯示 `linux_arm64`（engine VM）。
+- 第一次 `flutter --version` **不應該**印出 `Building flutter tool...`；若印了，代表 stamp 與
+  launcher 的 compile key 不一致（會白白重編一次），可用下列指令確認：
+
+```bash
+F=$PREFIX/opt/flutter
+[ "$(cat $F/bin/cache/flutter_tools.stamp)" = "$(git -C $F rev-parse HEAD):" ] && echo "stamp OK"
+```
 
 ## 建立 Android APK 專案 (以模式 A：本地編譯為例)
 

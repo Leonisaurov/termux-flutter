@@ -92,10 +92,68 @@ android {
 ## Environment
 
 - Build: WSL2 Ubuntu on Windows, NDK r27d at `/opt/android-ndk-r27d`
+- Release CI: GitHub-hosted `ubuntu-latest` (see `.github/workflows/build-deb.yml`, `runner` input)
 - WSL path: `<workspace-root>/`
 - Target: aarch64, Flutter 3.47.2
 - Test device: Samsung SM-X716B / Android 16
 - Use PowerShell (not Git Bash) for `adb push` to avoid path mangling
+
+## CI, Release Pipeline & Install-Time Invariants
+
+- **CI** (`.github/workflows/ci.yml`, `ubuntu-latest`, every PR/push to `master`, ~2-3 min):
+  `pytest tests/` plus `py_compile`, `bash -n`, shellcheck, actionlint, `check_repo.py`,
+  `check_version_drift.py` and `git diff --check`. It is the only automated gate — keep it green.
+- **Build deb** (`.github/workflows/build-deb.yml`, manual `workflow_dispatch`, ~5 h):
+  inputs `flutter_version` (must match `build.toml`), `arch` (arm64), `force`, `runner`.
+  Runs `build.py build_all`, then uploads artifact `flutter-termux-<tag>-<arch>` containing the
+  `.deb`, `.deb.sha256`, `.deb.size.txt`, `build_metadata.json`, `build_evidence.json` and
+  `inventory.txt`. Cache keys include `github.sha`, so a new commit restores the previous cache
+  through `restore-keys` (a stale cache is why the sysroot gets verified/rebuilt at all).
+
+Invariants that have already broken the pipeline once — keep them intact:
+
+1. **`sysroot.lock.json` pins exact Termux `.deb` URLs + sha256, and Termux is a rolling repo.**
+   Old versions are purged from the pool, so pinned URLs start returning 404 mid-build.
+   `Sysroot.build(..., refresh_lock=True)` (default) re-resolves the current versions from the
+   repository index, retries the download and rewrites the lock with a fresh `tree_hash`;
+   `refresh_lock=False` keeps strict lock semantics, and if the index itself is unreachable the
+   original download error is re-raised (never mask the root cause).
+   `build.py sysroot(...)` forwards the same flag.
+   Refresh the committed lock deliberately with `python3 build.py sysroot_lock --arch=arm64`
+   (it downloads every package to recompute `tree_hash` — ~87 MB for arm64).
+2. **Every `file://` URI in `packages/flutter_tools/.dart_tool/package_config.json` must stay inside
+   the flutter tree.** `build_all()` pre-resolves those packages with the host Dart SDK that `sync()`
+   installs, using `PUB_CACHE=<flutter_root>/.pub-cache`, so a device install needs no `pub get`.
+   `prepare_flutter_tools_packages()` validates the invariant and discards the generated cache when
+   any URI escapes the tree (the install then falls back to `pub get` on device).
+3. **`bin/cache/flutter_tools.stamp` must carry the launcher's compile key.**
+   `bin/internal/shared.sh` compares `"$(git -C "$FLUTTER_ROOT" rev-parse HEAD):$FLUTTER_TOOL_ARGS"`,
+   so `post_install.sh` must write the checkout revision — writing the engine version instead makes
+   the first `flutter` run throw the snapshot away and rebuild the tool.
+4. **`post_install.sh` derives `TMPDIR` from `PREFIX`.** A hardcoded `/data/data/com.termux/...`
+   default makes any run with an overridden `PREFIX` (CI runners, tests) try to `mkdir /data` and
+   fail closed.
+
+## Verifying a released .deb (no install required)
+
+```bash
+gh run download <run_id> -n flutter-termux-<tag>-arm64 -D /tmp/art
+sha256sum flutter_3.47.2_aarch64.deb        # must equal .sha256 and build_metadata.json:sha256
+stat -c%s flutter_3.47.2_aarch64.deb        # must equal .size.txt
+dpkg-deb -I flutter_3.47.2_aarch64.deb      # Package: flutter / Version / Architecture: aarch64
+dpkg-deb -x flutter_3.47.2_aarch64.deb /tmp/debroot        # foreground: backgrounded extracts get killed
+/tmp/debroot/data/data/com.termux/files/usr/opt/flutter/bin/cache/dart-sdk/bin/dart --version
+```
+
+- Expect `Dart SDK version: 3.13.2 ... on "linux_arm64"`, and `... on "android_arm64"` from
+  `bin/cache/artifacts/engine/android-arm64-release/linux-arm64/gen_snapshot --version`.
+- Use `dartvm <script>.dart` to prove the VM executes code; `dart run` needs a writable `$HOME`.
+- Not shipped on purpose: `bin/cache/flutter_tools.snapshot` (compiled on device by
+  `post_install.sh`) and the Android SDK (~430 MB, fetched at install time).
+- Install flow on a pacman-based Termux: `dpkg -i --force-depends <deb>` (dpkg's database does not
+  see pacman packages, so `Depends` look unsatisfied), then `bash $PREFIX/share/flutter/post_install.sh`.
+  Budget ~6 min, ~5 of them for the tool snapshot; a valid stamp means the first `flutter` run does
+  **not** print `Building flutter tool...`.
 
 ## Upgrade Notes (3.44.9 → 3.47.2)
 
