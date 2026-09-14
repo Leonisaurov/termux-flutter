@@ -47,6 +47,7 @@ declare -A STATE_TARGET
 declare -A STATE_PREIMAGE
 declare -A STATE_POSTIMAGE
 declare -A STATE_STATUS
+declare -A STATE_FUNCDIGEST
 declare -a PATCH_ORDER
 declare -A PATCH_FUNCS
 
@@ -65,6 +66,7 @@ if [ -f "$PATCH_STATE_FILE" ]; then
             if [ "$P_KEY" = "preimage" ]; then STATE_PREIMAGE["$P_NAME"]="$P_VAL"; fi
             if [ "$P_KEY" = "postimage" ]; then STATE_POSTIMAGE["$P_NAME"]="$P_VAL"; fi
             if [ "$P_KEY" = "status" ]; then STATE_STATUS["$P_NAME"]="$P_VAL"; fi
+            if [ "$P_KEY" = "func_digest" ]; then STATE_FUNCDIGEST["$P_NAME"]="$P_VAL"; fi
         fi
     done < "$PATCH_STATE_FILE"
 fi
@@ -79,6 +81,7 @@ save_state() {
             echo "    \"target\": \"${STATE_TARGET[$patch]}\"," >> "$PATCH_STATE_FILE"
             echo "    \"preimage\": \"${STATE_PREIMAGE[$patch]}\"," >> "$PATCH_STATE_FILE"
             echo "    \"postimage\": \"${STATE_POSTIMAGE[$patch]}\"," >> "$PATCH_STATE_FILE"
+            echo "    \"func_digest\": \"${STATE_FUNCDIGEST[$patch]}\"," >> "$PATCH_STATE_FILE"
             echo "    \"status\": \"${STATE_STATUS[$patch]}\"" >> "$PATCH_STATE_FILE"
             echo -n "  }" >> "$PATCH_STATE_FILE"
         fi
@@ -111,10 +114,32 @@ apply_patches() {
         current_hash=$(sha256sum "$target_file" | awk '{print $1}')
         local state_status="${STATE_STATUS[$patch_name]}"
         local state_post="${STATE_POSTIMAGE[$patch_name]}"
+        local func_digest
+        func_digest=$(declare -f "$patch_func" 2>/dev/null | sha256sum | awk '{print $1}')
 
         if [ "$state_status" == "applied" ] && [ "$current_hash" == "$state_post" ]; then
-            if [ "$MODE" == "status" ] || [ "$MODE" == "check" ]; then echo "  ✓ $patch_name: already applied"; fi
-            continue
+            if [ "${STATE_FUNCDIGEST[$patch_name]}" == "$func_digest" ]; then
+                if [ "$MODE" == "status" ] || [ "$MODE" == "check" ]; then echo "  ✓ $patch_name: already applied"; fi
+                continue
+            fi
+            # The patch implementation changed since this file was written (a patch fix, e.g. the
+            # forceNdkDownload() smart-cast fix). The stored postimage only proves the file matches
+            # the *previous* implementation, so re-evaluate here: run the current patch on a scratch
+            # copy and only patch for real when it would still change the file.
+            local tmp_recheck
+            tmp_recheck=$(mktemp "$TMPDIR/patch_recheck.XXXXXX")
+            cp "$target_file" "$tmp_recheck"
+            local recheck_changed=0
+            if $patch_func "$tmp_recheck" 2>/dev/null; then
+                if ! cmp -s "$target_file" "$tmp_recheck"; then recheck_changed=1; fi
+            fi
+            rm -f "$tmp_recheck"
+            STATE_FUNCDIGEST["$patch_name"]="$func_digest"
+            if [ $recheck_changed -eq 0 ]; then
+                if [ "$MODE" == "status" ] || [ "$MODE" == "check" ]; then echo "  ✓ $patch_name: already correct"; fi
+                continue
+            fi
+            if [ "$MODE" == "apply" ]; then echo "  ! $patch_name: patch updated, re-applying"; fi
         fi
 
         if [ "$MODE" == "status" ] || [ "$MODE" == "check" ]; then
@@ -154,6 +179,7 @@ apply_patches() {
             echo "  ✓ $patch_name: already correct"
             rm -f "$target_file.tmp"
             STATE_POSTIMAGE["$patch_name"]="$current_hash"
+            STATE_FUNCDIGEST["$patch_name"]="$func_digest"
             STATE_STATUS["$patch_name"]="applied"
             continue
         fi
@@ -162,6 +188,7 @@ apply_patches() {
         local new_hash
         new_hash=$(sha256sum "$target_file" | awk '{print $1}')
         STATE_POSTIMAGE["$patch_name"]="$new_hash"
+        STATE_FUNCDIGEST["$patch_name"]="$func_digest"
         STATE_STATUS["$patch_name"]="applied"
         echo "  ✓ $patch_name: successful"
     done
@@ -297,12 +324,28 @@ patch_build_appbundle() {
 register_patch "build_appbundle" "$FLUTTER_ROOT/packages/flutter_tools/lib/src/commands/build_appbundle.dart" patch_build_appbundle
 
 patch_plugin_utils() {
-    # forceNdkDownload() patched to early return
-    if grep -F -q "return // Termux" "$1"; then return 0; fi
+    # forceNdkDownload() patched to early return: Termux ships its own NDK, so Flutter's synthetic
+    # NDK/CMake provisioning must never run for it. The early return below has to stay a RUNTIME
+    # condition: a bare `return` there makes the rest of the function unreachable, and Kotlin then
+    # refuses the smart cast on `androidComponents`
+    #   "only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of
+    #    type 'AndroidComponentsExtension<*, *, *>?'"
+    # which fails :gradle:compileKotlin and with it every `flutter build apk` (BUILD FAILED).
+    # Reproduced with the real Kotlin compiler: bare return -> error, guarded return -> compiles.
+    local guarded='        if (System.getenv("TERMUX_NDK_PROVISIONING") == null) return // Termux: NDK already installed, skip CMake trick'
+    local bare='        return // Termux: NDK already installed, skip CMake trick'
+    if grep -F -q "$guarded" "$1"; then return 0; fi
+    if grep -F -q "$bare" "$1"; then
+        # Installs patched before the smart-cast fix: drop the unconditional return first, then
+        # re-insert the guarded form below.
+        awk -v drop="$bare" '$0 != drop' "$1" > "$1.termux_tmp" && mv "$1.termux_tmp" "$1"
+    fi
     grep -q "fun forceNdkDownload" "$1" || return 1
-    sed -i '/fun forceNdkDownload/,/^    }/ {
-        /val forcingNotRequired: Boolean/i\        return // Termux: NDK already installed, skip CMake trick
-    }' "$1"
+    awk -v ins="$guarded" '
+        !inserted && /val forcingNotRequired: Boolean/ { print ins; inserted = 1 }
+        { print }
+    ' "$1" > "$1.termux_tmp" && mv "$1.termux_tmp" "$1"
+    grep -F -q "$guarded" "$1"
 }
 register_patch "plugin_utils" "$FLUTTER_ROOT/packages/flutter_tools/gradle/src/main/kotlin/FlutterPluginUtils.kt" patch_plugin_utils
 

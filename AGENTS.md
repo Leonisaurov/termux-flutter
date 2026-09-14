@@ -133,6 +133,19 @@ Invariants that have already broken the pipeline once — keep them intact:
 4. **`post_install.sh` derives `TMPDIR` from `PREFIX`.** A hardcoded `/data/data/com.termux/...`
    default makes any run with an overridden `PREFIX` (CI runners, tests) try to `mkdir /data` and
    fail closed.
+5. **The `forceNdkDownload()` early return must stay a runtime condition.** Termux ships the NDK, so
+   `patch_plugin_utils` returns before Flutter's synthetic NDK/CMake provisioning. Written as a bare
+   `return` it makes the rest of the function unreachable, and Kotlin then refuses the smart cast on
+   `androidComponents` — `FlutterPluginUtils.kt:817: "only safe (?.) or non-null asserted (!!.) calls
+   are allowed on a nullable receiver of type 'AndroidComponentsExtension<*, *, *>?'"` — which fails
+   `:gradle:compileKotlin` and every `flutter build apk` with `BUILD FAILED`. Keep
+   `if (System.getenv("TERMUX_NDK_PROVISIONING") == null) return` (proven against the real compiler:
+   bare form reproduces the error, guarded form compiles).
+6. **`patch_state.json` records a `func_digest` per patch.** `apply_patches` skips a patch only when
+   the file hash *and* the digest of the current implementation both match, so editing a patch
+   function re-evaluates it on existing installs (via a scratch-copy comparison) instead of trusting
+   a postimage written by an older implementation. Without it, a patch fix never reaches anyone who
+   already installed the deb.
 
 ## Verifying a released .deb (no install required)
 

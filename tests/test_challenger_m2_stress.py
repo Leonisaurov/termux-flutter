@@ -218,7 +218,7 @@ def test_stress_dual_preimage_fresh_install_prepatched(tmp_path):
     (flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "commands" / "build_aar.dart").write_text("defaultsTo: <String>['android-arm64']\n")
     (flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "commands" / "build_appbundle.dart").write_text("defaultsTo: <String>['android-arm64']\n")
     (flutter_root / "packages" / "flutter_tools" / "gradle" / "src" / "main" / "kotlin" / "FlutterPluginUtils.kt").write_text(
-        "fun forceNdkDownload() {\n        return // Termux: NDK already installed, skip CMake trick\n val forcingNotRequired: Boolean = true\n }\n"
+        'fun forceNdkDownload() {\n        if (System.getenv("TERMUX_NDK_PROVISIONING") == null) return // Termux: NDK already installed, skip CMake trick\n val forcingNotRequired: Boolean = true\n }\n'
     )
     (flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "flutter_cache.dart").write_text(
         "final List<String>? binaryDirs = artifacts[_platform.isAndroid ? 'linux' : _platform.operatingSystem]; // Termux: map Android host to Linux artifacts\n"

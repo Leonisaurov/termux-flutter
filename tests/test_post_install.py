@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -794,3 +795,92 @@ def test_flutter_termux_doctor_validation_modes(tmp_path):
     res_fail = subprocess.run(["bash", "-c", cmd_fail], capture_output=True, text=True)
     assert res_fail.returncode != 0
     assert "FAILED" in res_fail.stdout
+
+
+# --- plugin_utils patch: forceNdkDownload() early return -----------------------------
+#
+# Termux ships its own NDK, so the patch stops Flutter's synthetic NDK/CMake provisioning by
+# returning early from forceNdkDownload(). That return MUST be guarded by a runtime condition:
+# a bare `return` makes everything below it unreachable, and the Kotlin compiler then refuses
+# the smart cast on `androidComponents` (FlutterPluginUtils.kt: "only safe (?.) or non-null
+# asserted (!!.) calls are allowed on a nullable receiver of type 'AndroidComponentsExtension
+# <*, *, *>?'"), so :gradle:compileKotlin fails and every `flutter build apk` ends in
+# BUILD FAILED. Verified against the real compiler: the bare form reproduces the error, the
+# guarded form compiles.
+
+BARE_NDK_RETURN = "return // Termux: NDK already installed, skip CMake trick"
+GUARDED_NDK_RETURN = 'if (System.getenv("TERMUX_NDK_PROVISIONING") == null) ' + BARE_NDK_RETURN
+
+
+def plugin_utils_path(flutter_root):
+    return flutter_root / "packages" / "flutter_tools" / "gradle" / "src" / "main" / "kotlin" / "FlutterPluginUtils.kt"
+
+
+def has_bare_ndk_return(text):
+    return any(line.strip() == BARE_NDK_RETURN for line in text.splitlines())
+
+
+def test_plugin_utils_patch_keeps_code_after_return_reachable(tmp_path):
+    flutter_root, android_sdk, prefix, _ = create_mock_env(tmp_path)
+
+    res = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
+    assert res.returncode == 0, res.stdout
+
+    text = plugin_utils_path(flutter_root).read_text()
+    assert GUARDED_NDK_RETURN in text
+    assert not has_bare_ndk_return(text), (
+        "forceNdkDownload() carries an unconditional return: the code after it becomes dead for "
+        "the Kotlin compiler and the smart cast on androidComponents breaks :gradle:compileKotlin"
+    )
+
+
+def test_plugin_utils_patch_migrates_legacy_unconditional_return(tmp_path):
+    """Installs patched before the smart-cast fix still hold the unconditional return, and their
+    state vouches for exactly that file. --apply has to upgrade them in place, otherwise a user who
+    re-runs post_install keeps getting BUILD FAILED."""
+    flutter_root, android_sdk, prefix, _ = create_mock_env(tmp_path)
+    target = plugin_utils_path(flutter_root)
+    target.write_text(
+        "fun forceNdkDownload() {\n" f"        {BARE_NDK_RETURN}\n" " val forcingNotRequired: Boolean = true\n" " }\n",
+        newline="\n",
+    )
+
+    # State exactly as the older post_install left it: applied, postimage matches, no func_digest.
+    state_file = prefix / "share" / "flutter" / "patch_state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "plugin_utils": {
+                    "target": to_bash_path(target),
+                    "preimage": "0" * 64,
+                    "postimage": hashlib.sha256(target.read_bytes()).hexdigest(),
+                    "status": "applied",
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        newline="\n",
+    )
+
+    res = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
+    assert res.returncode == 0, res.stdout
+
+    text = target.read_text()
+    assert GUARDED_NDK_RETURN in text
+    assert not has_bare_ndk_return(text)
+    # The refreshed state must record which patch implementation produced the file.
+    assert json.loads(state_file.read_text())["plugin_utils"]["func_digest"]
+
+
+def test_plugin_utils_patch_is_idempotent(tmp_path):
+    flutter_root, android_sdk, prefix, _ = create_mock_env(tmp_path)
+
+    first = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
+    assert first.returncode == 0, first.stdout
+    snapshot = plugin_utils_path(flutter_root).read_text()
+
+    second = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
+    assert second.returncode == 0, second.stdout
+    assert plugin_utils_path(flutter_root).read_text() == snapshot
+    assert "unknown upstream content" not in second.stdout
