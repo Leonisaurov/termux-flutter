@@ -337,6 +337,13 @@ resource:
     output: $prefix/bin/flutter-termux
     mode: 0o755
 
+  # Per-project aapt2 wiring: adds/replaces android.aapt2FromMavenOverride in a project's
+  # android/gradle.properties (AGP's own aapt2 is an x86_64 binary and cannot run on Android aarch64).
+  use_my_apt:
+    source: $root/../scripts/install/useMyApt.sh
+    output: $prefix/bin/useMyApt
+    mode: 0o755
+
   version_json:
     source: |-
       {

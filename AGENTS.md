@@ -77,6 +77,9 @@ Each Flutter project needs in `android/gradle.properties`:
 ```properties
 android.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2
 ```
+Run `useMyApt` inside the project (or `useMyApt --project <dir>`) to add or replace that line; the deb
+installs it at `$prefix/bin/useMyApt` (`scripts/install/useMyApt.sh`). `scripts/install/flutter_project_config.sh`
+does the same plus the build.gradle tweaks below, with Mode A/B selection and rollback.
 
 And in `android/app/build.gradle.kts`:
 ```kotlin
