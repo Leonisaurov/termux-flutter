@@ -82,15 +82,65 @@ index 29ef12f7bb8..4edf30d6870 100644
      return globals.os.hostPlatform;
    }
 diff --git a/packages/flutter_tools/lib/src/web/chrome.dart b/packages/flutter_tools/lib/src/web/chrome.dart
-index 2d41ab695f5..25dfac64ead 100644
+index 2d41ab695f5..2e325ad0a1 100644
 --- a/packages/flutter_tools/lib/src/web/chrome.dart
 +++ b/packages/flutter_tools/lib/src/web/chrome.dart
-@@ -57,7 +57,7 @@ String findChromeExecutable(Platform platform, FileSystem fileSystem) {
+@@ -27,6 +27,20 @@ const kEdgeEnvironment = 'EDGE_ENVIRONMENT';
+ /// The expected executable name on linux.
+ const kLinuxExecutable = 'google-chrome';
+ 
++/// Termux: the name Termux packages Google Chrome/Chromium under.
++const kTermuxExecutable = 'chromium-browser';
++
++/// Termux: every Chromium name we accept on a Linux/Android host, in probe order.
++///
++/// Termux ships Chromium as `chromium-browser`, so a plain `google-chrome` lookup
++/// makes `flutter doctor` and `flutter run -d chrome` fail on a stock install.
++const List<String> kLinuxExecutableCandidates = <String>[
++  kLinuxExecutable,
++  kTermuxExecutable,
++  'chromium',
++  'chrome',
++];
++
+ /// The expected executable name on macOS.
+ const kMacOSExecutable = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+ 
+@@ -57,8 +71,9 @@ String findChromeExecutable(Platform platform, FileSystem fileSystem) {
    if (platform.environment.containsKey(kChromeEnvironment)) {
      return platform.environment[kChromeEnvironment]!;
    }
 -  if (platform.isLinux) {
+-    return kLinuxExecutable;
 +  if (platform.isLinux || platform.isAndroid) { // Termux: use Linux Chrome lookup on Android host.
-     return kLinuxExecutable;
++    // Termux: probe PATH for every known Chromium name instead of assuming `google-chrome`.
++    return firstExecutableOnPath(platform, fileSystem, kLinuxExecutableCandidates) ?? kLinuxExecutable;
    }
    if (platform.isMacOS) {
+     return kMacOSExecutable;
+@@ -80,6 +95,25 @@ String findChromeExecutable(Platform platform, FileSystem fileSystem) {
+   throwToolExit('Platform ${platform.operatingSystem} is not supported.');
+ }
+ 
++/// Termux: return the first of [candidates] that exists in `PATH`, or null.
++///
++/// Candidates are probed in order, so an explicitly installed `google-chrome` still
++/// wins over the `chromium-browser` that ships with Termux.
++String? firstExecutableOnPath(Platform platform, FileSystem fileSystem, List<String> candidates) {
++  final String? path = platform.environment['PATH'];
++  if (path == null || path.isEmpty) {
++    return null;
++  }
++  final List<String> entries = path.split(':').where((String entry) => entry.isNotEmpty).toList();
++  for (final String candidate in candidates) {
++    final bool found = entries.any((String entry) => fileSystem.file(fileSystem.path.join(entry, candidate)).existsSync());
++    if (found) {
++      return candidate;
++    }
++  }
++  return null;
++}
++
+ /// Find the Microsoft Edge executable on the current platform.
+ ///
+ /// Does not verify whether the executable exists.

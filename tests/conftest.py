@@ -61,3 +61,37 @@ def to_bash_path(path: Union[str, Path]) -> str:
 
 to_wsl_posix = to_bash_path
 to_bash_posix = to_bash_path
+
+
+# chrome.dart needs more than a one-line stub: post_install's patch_chrome anchors on the
+# kLinuxExecutable declaration, on the `return kLinuxExecutable;` it replaces, and on the two doc
+# comments it inserts before. A stub without them is unpatchable and post_install must abort on it,
+# so every mock environment builds this fixture instead.
+CHROME_FIXTURE = (
+    "const kLinuxExecutable = 'google-chrome';\n"
+    "\n"
+    "String findChromeExecutable(Platform platform, FileSystem fileSystem) {\n"
+    "  if (platform.isLinux) {\n"
+    "    return kLinuxExecutable;\n"
+    "  }\n"
+    "  throwToolExit('Platform ${platform.operatingSystem} is not supported.');\n"
+    "}\n"
+    "\n"
+    "/// The expected executable name on macOS.\n"
+    "const kMacOSExecutable = '/Applications/Google Chrome.app';\n"
+    "\n"
+    "/// Find the Microsoft Edge executable on the current platform.\n"
+    "String findEdgeExecutable(Platform platform, FileSystem fileSystem) {\n"
+    "  return '';\n"
+    "}\n"
+)
+
+# The state an install already on the released deb carries: the previous patch_chrome only added
+# the Android lookup, never the candidate list that makes `chromium-browser` discoverable.
+CHROME_LEGACY_PREIMAGE = CHROME_FIXTURE.replace(
+    "  if (platform.isLinux) {",
+    "  if (platform.isLinux || platform.isAndroid) { // Termux: use Linux Chrome lookup on Android host.",
+)
+
+# Marker that proves patch_chrome upgraded a file to the current postimage.
+CHROME_CANDIDATES_MARKER = "kLinuxExecutableCandidates"

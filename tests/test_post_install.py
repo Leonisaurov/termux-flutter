@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).parent.parent
 POST_INSTALL = REPO_ROOT / "scripts" / "install" / "post_install.sh"
 
 
-from conftest import to_bash_path
+from conftest import CHROME_CANDIDATES_MARKER, CHROME_FIXTURE, CHROME_LEGACY_PREIMAGE, to_bash_path
 
 
 def canonical_provenance():
@@ -97,7 +97,7 @@ def create_mock_env(tmp_path):
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "build_info.dart":
             "if (globals.platform.isLinux) {\n",
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "web" / "chrome.dart":
-            "if (platform.isLinux) {\n",
+            CHROME_FIXTURE,
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "commands" / "build_linux.dart":
             "if (!globals.platform.isLinux)\n!featureFlags.isLinuxEnabled || !globals.platform.isLinux\n",
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "build_system" / "targets" / "icon_tree_shaker.dart":
@@ -884,3 +884,100 @@ def test_plugin_utils_patch_is_idempotent(tmp_path):
     assert second.returncode == 0, second.stdout
     assert plugin_utils_path(flutter_root).read_text() == snapshot
     assert "unknown upstream content" not in second.stdout
+
+
+CHROME_PROBE_RETURN = (
+    "    return firstExecutableOnPath(platform, fileSystem, kLinuxExecutableCandidates) ?? kLinuxExecutable;"
+)
+CHROME_CANDIDATES_DECL = "const List<String> kLinuxExecutableCandidates = <String>["
+
+
+def chrome_path(flutter_root):
+    return flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "web" / "chrome.dart"
+
+
+def test_chrome_patch_probes_path_for_every_chromium_name(tmp_path):
+    """Termux ships `chromium-browser`, so a hardcoded `google-chrome` lookup leaves `flutter
+    doctor` reporting the browser missing and `flutter run -d chrome` unusable."""
+    flutter_root, android_sdk, prefix, _ = create_mock_env(tmp_path)
+
+    res = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
+    assert res.returncode == 0, res.stdout
+
+    text = chrome_path(flutter_root).read_text()
+    assert CHROME_CANDIDATES_DECL in text
+    assert "const kTermuxExecutable = 'chromium-browser';" in text
+    assert CHROME_PROBE_RETURN in text
+    assert "String? firstExecutableOnPath(Platform platform, FileSystem fileSystem, List<String> candidates) {" in text
+    # The probe has to replace the hardcoded name, not sit next to it.
+    assert "\n    return kLinuxExecutable;\n" not in text
+    assert "if (platform.isLinux || platform.isAndroid) { // Termux: use Linux Chrome lookup on Android host." in text
+
+
+def test_chrome_patch_upgrades_legacy_isandroid_only_install(tmp_path):
+    """Installs patched by the previous version of patch_chrome already carry
+    `platform.isAndroid`. The idempotency guard must key on the new marker, otherwise those
+    installs are classified as "already applied" and never receive the candidate list — the
+    released deb is exactly that install."""
+    flutter_root, android_sdk, prefix, _ = create_mock_env(tmp_path)
+    target = chrome_path(flutter_root)
+    target.write_text(CHROME_LEGACY_PREIMAGE, newline="\n")
+
+    res = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
+    assert res.returncode == 0, res.stdout
+
+    text = target.read_text()
+    assert CHROME_CANDIDATES_DECL in text
+    assert CHROME_PROBE_RETURN in text
+    assert text.count("if (platform.isLinux || platform.isAndroid)") == 1
+
+
+def test_chrome_patch_is_idempotent(tmp_path):
+    flutter_root, android_sdk, prefix, _ = create_mock_env(tmp_path)
+
+    first = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
+    assert first.returncode == 0, first.stdout
+    snapshot = chrome_path(flutter_root).read_text()
+
+    second = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
+    assert second.returncode == 0, second.stdout
+    assert chrome_path(flutter_root).read_text() == snapshot
+    assert "unknown upstream content" not in second.stdout
+
+
+def test_chrome_patch_fails_closed_on_unrecognised_source(tmp_path):
+    """An unexpected upstream rewrite must abort the install, not half-patch chrome.dart."""
+    flutter_root, android_sdk, prefix, _ = create_mock_env(tmp_path)
+    target = chrome_path(flutter_root)
+    target.write_text("// upstream moved the executable lookup\n", newline="\n")
+
+    res = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
+    assert res.returncode != 0
+    assert target.read_text() == "// upstream moved the executable lookup\n"
+
+
+def test_chrome_patch_matches_the_build_time_patch(tmp_path):
+    """The runtime patch and patches/3.47.2/flutter_sdk_arm64_default.patch must produce the same
+    postimage, otherwise a rebuilt deb and a re-patched install disagree about chrome.dart."""
+    patch = (REPO_ROOT / "patches" / "3.47.2" / "flutter_sdk_arm64_default.patch").read_text()
+    marker = "diff --git a/packages/flutter_tools/lib/src/web/chrome.dart"
+    hunk = patch[patch.index(marker):]
+    added = [
+        line[1:]
+        for line in hunk.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+    assert added, "the build-time patch no longer touches chrome.dart"
+
+    flutter_root, android_sdk, prefix, _ = create_mock_env(tmp_path)
+    res = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
+    assert res.returncode == 0, res.stdout
+    text = chrome_path(flutter_root).read_text()
+    for line in added:
+        if not line.strip():
+            continue  # a unified diff spells an added blank line as "+"
+        assert line in text, f"runtime patch is missing a line the build-time patch adds: {line}"
+
+    # The reverse direction for the two lines that carry the behaviour.
+    assert CHROME_PROBE_RETURN in text
+    assert CHROME_CANDIDATES_DECL in text

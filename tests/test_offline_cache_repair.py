@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).parent.parent
 POST_INSTALL = REPO_ROOT / "scripts" / "install" / "post_install.sh"
 
 
-from conftest import to_bash_path
+from conftest import CHROME_FIXTURE, to_bash_path
 
 
 def create_mock_env(tmp_path):
@@ -94,7 +94,7 @@ def create_mock_env(tmp_path):
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "build_info.dart":
             "if (globals.platform.isLinux) {\n",
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "web" / "chrome.dart":
-            "if (platform.isLinux) {\n",
+            CHROME_FIXTURE,
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "commands" / "build_linux.dart":
             "if (!globals.platform.isLinux)\n!featureFlags.isLinuxEnabled || !globals.platform.isLinux\n",
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "build_system" / "targets" / "icon_tree_shaker.dart":

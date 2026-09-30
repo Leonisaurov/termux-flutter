@@ -371,9 +371,83 @@ patch_build_info() {
 register_patch "build_info" "$FLUTTER_ROOT/packages/flutter_tools/lib/src/build_info.dart" patch_build_info
 
 patch_chrome() {
-    if grep -F -q "platform.isAndroid" "$1"; then return 0; fi
-    grep -q "if (platform.isLinux)" "$1" || return 1
+    # Termux ships Chromium as `chromium-browser`, not `google-chrome`. A hardcoded `google-chrome`
+    # lookup makes `flutter doctor` report the browser missing and `flutter run -d chrome` unusable
+    # on a stock install, so the tool has to probe PATH for every known Chromium name instead.
+    #
+    # The idempotency guard tests the NEW marker, not `platform.isAndroid`: installs patched by the
+    # previous version of this function already carry that line, so guarding on it would classify
+    # them as "already applied" and the candidate list would never reach anyone who is already on
+    # the released deb. patch_state.json's func_digest is what re-evaluates this function on those
+    # installs (see AGENTS.md, invariant 6).
+    if grep -F -q "kLinuxExecutableCandidates" "$1"; then return 0; fi
+    grep -q "^const kLinuxExecutable = .google-chrome.;$" "$1" || return 1
+    grep -q "^    return kLinuxExecutable;$" "$1" || return 1
+    grep -q "is not supported" "$1" || return 1
+
+    local consts helper
+    consts=$(mktemp "$TMPDIR/patch_chrome_consts.XXXXXX")
+    helper=$(mktemp "$TMPDIR/patch_chrome_helper.XXXXXX")
+
+    cat > "$consts" << 'CHROME_CONSTS_EOF'
+/// Termux: the name Termux packages Google Chrome/Chromium under.
+const kTermuxExecutable = 'chromium-browser';
+
+/// Termux: every Chromium name we accept on a Linux/Android host, in probe order.
+///
+/// Termux ships Chromium as `chromium-browser`, so a plain `google-chrome` lookup
+/// makes `flutter doctor` and `flutter run -d chrome` fail on a stock install.
+const List<String> kLinuxExecutableCandidates = <String>[
+  kLinuxExecutable,
+  kTermuxExecutable,
+  'chromium',
+  'chrome',
+];
+
+CHROME_CONSTS_EOF
+
+    cat > "$helper" << 'CHROME_HELPER_EOF'
+/// Termux: return the first of [candidates] that exists in `PATH`, or null.
+///
+/// Candidates are probed in order, so an explicitly installed `google-chrome` still
+/// wins over the `chromium-browser` that ships with Termux.
+String? firstExecutableOnPath(Platform platform, FileSystem fileSystem, List<String> candidates) {
+  final String? path = platform.environment['PATH'];
+  if (path == null || path.isEmpty) {
+    return null;
+  }
+  final List<String> entries = path.split(':').where((String entry) => entry.isNotEmpty).toList();
+  for (final String candidate in candidates) {
+    final bool found = entries.any((String entry) => fileSystem.file(fileSystem.path.join(entry, candidate)).existsSync());
+    if (found) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+CHROME_HELPER_EOF
+
+    # The anchors are exactly the ones patches/3.47.2/flutter_sdk_arm64_default.patch touches, so an
+    # install patched here at runtime ends up byte-identical to one built with the patch already in.
+    awk -v consts="$consts" -v helper="$helper" '
+        function emit(file,   line) { while ((getline line < file) > 0) print line; close(file) }
+        /^\/\/\/ The expected executable name on macOS\.$/ { emit(consts); done_consts = 1 }
+        $0 == "    return kLinuxExecutable;" {
+            print "    // Termux: probe PATH for every known Chromium name instead of assuming `google-chrome`."
+            print "    return firstExecutableOnPath(platform, fileSystem, kLinuxExecutableCandidates) ?? kLinuxExecutable;"
+            done_probe = 1
+            next
+        }
+        /^\/\/\/ Find the Microsoft Edge executable on the current platform\.$/ { emit(helper); done_helper = 1 }
+        { print }
+        END { if (!done_consts || !done_probe || !done_helper) exit 1 }
+    ' "$1" > "$1.termux_tmp" || { rm -f "$consts" "$helper" "$1.termux_tmp"; return 1; }
+    mv "$1.termux_tmp" "$1"
+    rm -f "$consts" "$helper"
+
     sed -i "s#if (platform.isLinux) {#if (platform.isLinux || platform.isAndroid) { // Termux: use Linux Chrome lookup on Android host.#" "$1"
+    grep -F -q "kLinuxExecutableCandidates" "$1"
 }
 register_patch "chrome" "$FLUTTER_ROOT/packages/flutter_tools/lib/src/web/chrome.dart" patch_chrome
 

@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).parent.parent
 POST_INSTALL = REPO_ROOT / "scripts" / "install" / "post_install.sh"
 
 
-from conftest import to_bash_path
+from conftest import CHROME_CANDIDATES_MARKER, CHROME_FIXTURE, CHROME_LEGACY_PREIMAGE, to_bash_path
 
 
 def create_mock_env(tmp_path):
@@ -80,7 +80,7 @@ def create_mock_env(tmp_path):
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "build_info.dart":
             "if (globals.platform.isLinux) {\n",
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "web" / "chrome.dart":
-            "if (platform.isLinux) {\n",
+            CHROME_FIXTURE,
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "commands" / "build_linux.dart":
             "if (!globals.platform.isLinux)\n!featureFlags.isLinuxEnabled || !globals.platform.isLinux\n",
         flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "build_system" / "targets" / "icon_tree_shaker.dart":
@@ -225,7 +225,9 @@ def test_stress_dual_preimage_fresh_install_prepatched(tmp_path):
     )
     (flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "artifacts.dart").write_text("if (platform.isLinux || platform.isAndroid) {\n")
     (flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "build_info.dart").write_text("if (globals.platform.isLinux || globals.platform.isAndroid) {\n")
-    (flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "web" / "chrome.dart").write_text("if (platform.isLinux || platform.isAndroid) {\n")
+    # chrome.dart is deliberately left in the legacy preimage: the released deb ships exactly that
+    # state, so the pre-patched run has to upgrade it instead of skipping it.
+    (flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "web" / "chrome.dart").write_text(CHROME_LEGACY_PREIMAGE)
     (flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "commands" / "build_linux.dart").write_text("if (false /* Termux: allow linux build */)\n!featureFlags.isLinuxEnabled /* Termux: visible */\n")
     (flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "build_system" / "targets" / "icon_tree_shaker.dart").write_text("kIconTreeShakerFlag\nfalse /* Termux: const_finder unavailable */\n")
     (flutter_root / "bin" / "flutter").write_text("#!/data/data/com.termux/files/usr/bin/bash\necho flutter\n")
@@ -235,11 +237,16 @@ def test_stress_dual_preimage_fresh_install_prepatched(tmp_path):
     assert res_check.returncode == 0, f"--check failed on pre-patched env: {res_check.stdout}"
     assert "already correct" in res_check.stdout
     assert "unknown upstream content" not in res_check.stdout
+    # chrome.dart is the one file that is not postimage yet, and --check has to say so.
+    assert "chrome: pending" in res_check.stdout
 
     # Run --apply on fresh pre-patched env
     res_apply = run_post_install(flutter_root, android_sdk, prefix, ["--apply"])
     assert res_apply.returncode == 0, f"--apply failed on pre-patched env: {res_apply.stdout}"
     assert "already correct" in res_apply.stdout
+    chrome_text = (flutter_root / "packages" / "flutter_tools" / "lib" / "src" / "web" / "chrome.dart").read_text()
+    assert CHROME_CANDIDATES_MARKER in chrome_text
+    assert chrome_text.count("if (platform.isLinux || platform.isAndroid)") == 1
 
 
 def test_stress_rollback_byte_identity_all_files(tmp_path):
