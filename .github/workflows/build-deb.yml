@@ -95,6 +95,13 @@ jobs:
       - name: Add depot_tools to PATH
         run: echo "$DEPOT_DIR" >> "$GITHUB_PATH"
 
+      # No ${{ github.sha }} in any key below, on purpose. The hashFiles() term already identifies
+      # every input that decides the cached bytes (pinned flutter/engine/Skia/Dart revisions, the
+      # patch set, the packaging scripts), so the commit only added cardinality: every push minted
+      # a fresh multi-GB entry with byte-identical content, no run ever hit an exact key again, and
+      # the older entries then aged past the 7-day retention while the repo builds a deb only every
+      # couple of weeks. restore-keys stays as the fallback for the first run after a change, and
+      # because a changed hashFiles() changes the whole prefix it can never restore stale bytes.
       - name: Cache engine source
         id: cache-engine
         uses: actions/cache@v4
@@ -102,7 +109,7 @@ jobs:
           path: |
             ${{ env.ENGINE_ROOT }}
             ~/.gcloud-gce-linux-sdk
-          key: engine-src-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', '.gclient') }}-${{ github.sha }}
+          key: engine-src-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', '.gclient') }}
           restore-keys: |
             engine-src-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', '.gclient') }}-
 
@@ -111,7 +118,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: sysroot
-          key: sysroot-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'sysroot.lock.json') }}-${{ github.sha }}
+          key: sysroot-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'sysroot.lock.json') }}
           restore-keys: |
             sysroot-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'sysroot.lock.json') }}-
 
@@ -122,7 +129,7 @@ jobs:
           path: |
             flutter/engine/src/out
             flutter/.gclient
-          key: build-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'package.yaml', 'patches/**/*.patch', 'build.py', 'package.py', 'sysroot.py', 'utils.py') }}-${{ github.sha }}
+          key: build-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'package.yaml', 'patches/**/*.patch', 'build.py', 'package.py', 'sysroot.py', 'utils.py') }}
           restore-keys: |
             build-${{ runner.os }}-${{ env.ARCH }}-${{ hashFiles('build.toml', 'package.yaml', 'patches/**/*.patch', 'build.py', 'package.py', 'sysroot.py', 'utils.py') }}-
 
